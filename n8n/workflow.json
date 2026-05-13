@@ -1,0 +1,104 @@
+{
+  "name": "STEM Textbook Translator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "translate-textbook",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook (PDF upload)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "translate-textbook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/translate",
+        "sendBinaryData": true,
+        "binaryPropertyName": "file",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "want_pdf", "value": "true" },
+            { "name": "title", "value": "={{ $json[\"filename\"] || \"Translated Document\" }}" }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "call-fastapi",
+      "name": "Call FastAPI /translate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-glossary",
+              "leftValue": "={{ Object.keys($json.glossary || {}).length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "glossary-check",
+      "name": "Glossary built?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, job_id: $json.job_id, docx: $json.docx, pdf: $json.pdf, terms: Object.keys($json.glossary).length, element_count: $json.element_count }) }}"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, reason: 'empty glossary — likely OCR failure or unsupported language', job_id: $json.job_id }) }}",
+        "options": { "responseCode": 422 }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 380]
+    }
+  ],
+  "connections": {
+    "Webhook (PDF upload)": {
+      "main": [[{ "node": "Call FastAPI /translate", "type": "main", "index": 0 }]]
+    },
+    "Call FastAPI /translate": {
+      "main": [[{ "node": "Glossary built?", "type": "main", "index": 0 }]]
+    },
+    "Glossary built?": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

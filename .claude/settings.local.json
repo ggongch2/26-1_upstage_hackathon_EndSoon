@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(py -3 -m py_compile pipeline/parser.py pipeline/solar.py pipeline/glossary.py pipeline/translator.py pipeline/docx_builder.py main.py)",
+      "Bash(python -m py_compile pipeline/parser.py pipeline/solar.py pipeline/glossary.py pipeline/translator.py pipeline/docx_builder.py main.py)"
+    ]
+  }
+}
