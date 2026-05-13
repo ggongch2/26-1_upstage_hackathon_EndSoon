@@ -34,13 +34,23 @@ notepad .env   # UPSTAGE_API_KEY 입력
 uvicorn main:app --reload --port 8000
 ```
 
-테스트:
+**브라우저로 접속**: http://localhost:8000  
+→ PDF 드래그앤드롭 → 진행상황 → 용어집 리뷰 → DOCX/PDF 다운로드.
+
+CLI 테스트:
 
 ```powershell
 curl.exe -X POST http://localhost:8000/translate `
   -F "file=@samples/textbook.pdf" `
   -F "want_pdf=false"
 ```
+
+### Mock 모드 (API 키 없이 검증)
+
+`.env`에 `MOCK_MODE=true`로 설정하면 Upstage API를 호출하지 않고 내장된
+샘플 선형대수 문서를 사용해 전체 파이프라인을 돌려볼 수 있습니다.
+웹 UI 상단의 모드 배지가 `MOCK 모드`로 표시됩니다. API 키가 준비되면
+`MOCK_MODE=false`로 바꿔서 실서비스 모드로 전환.
 
 ## n8n 연결
 
@@ -67,7 +77,7 @@ hackerton/
 
 ## 알려진 한계 / 다음 단계
 
-- **수식 렌더링**: LaTeX 원문을 Cambria Math로 표기. Word에서 진짜 수식 객체(OMML)로 표시하려면 `latex2mathml` + OMML 변환 단계 추가 필요.
-- **2-Pass 용어집 검토 UI 미구현**: 현재는 1차 추출 결과를 그대로 적용. 데모용으로 추출된 용어집을 응답 JSON에 노출하므로 프런트에서 검토 후 재호출하는 흐름으로 확장 가능.
-- **PDF 출력**: `docx2pdf`는 MS Word가 설치된 Windows/macOS에서만 동작. 서버 환경엔 LibreOffice headless로 교체 권장.
+- **수식 렌더링**: LaTeX → MathML → OMML(Word 네이티브 수식) 변환 구현 완료. 동봉된 `pipeline/assets/MML2OMML.XSL`은 textbook 핵심 케이스(분수·첨자·루트·행렬)만 커버하는 미니 버전. Word 정품 XSL을 덮어쓰면 fidelity 100%로 상승.
+- **2-Pass 용어집 검토 UI**: 현재 웹 UI는 추출된 용어집을 결과 카드로 노출. "수정 후 재번역" 버튼 추가하면 진짜 2-Pass 완성.
+- **PDF 출력**: `docx2pdf`(MS Word) → 실패 시 LibreOffice headless 폴백. Docker 환경에선 `apt install libreoffice`로 충분.
 - **대용량 처리**: 현재는 단일 요청에서 동기 처리. 장시간 PDF는 n8n에서 큐+상태 폴링 패턴으로 분리 권장.

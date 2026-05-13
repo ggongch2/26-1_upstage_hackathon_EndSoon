@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>STEM Textbook Translator</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #1a1d24;
+    --panel-2: #232730;
+    --accent: #6fa8ff;
+    --accent-2: #9b87ff;
+    --text: #e6e9ef;
+    --muted: #8a92a3;
+    --border: #2c313c;
+    --good: #5dd49b;
+    --warn: #f4b860;
+    --bad: #ff7676;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Noto Sans KR", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 28px 32px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .badge {
+    background: var(--panel-2);
+    color: var(--accent);
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+  }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 28px 24px 60px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .drop {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 60px 24px;
+    text-align: center;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    background: var(--panel);
+  }
+  .drop.hover {
+    border-color: var(--accent);
+    background: var(--panel-2);
+  }
+  .drop input[type=file] { display: none; }
+  .drop .icon { font-size: 32px; }
+  .drop h2 { margin: 12px 0 4px; font-size: 16px; font-weight: 500; }
+  .drop p { margin: 0; color: var(--muted); font-size: 13px; }
+  .controls {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--panel);
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  .controls label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .controls input[type=text] {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 10px;
+    width: 220px;
+    font-size: 13px;
+  }
+  button.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .stages { display: flex; gap: 10px; flex-wrap: wrap; }
+  .stage {
+    flex: 1;
+    min-width: 140px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+    color: var(--muted);
+  }
+  .stage .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+  .stage.active { color: var(--text); border-color: var(--accent); }
+  .stage.active .dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(111,168,255,0.18); animation: pulse 1.2s infinite; }
+  .stage.done { color: var(--good); border-color: rgba(93,212,155,0.3); }
+  .stage.done .dot { background: var(--good); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(111,168,255,0); } }
+  .results { display: none; }
+  .results.visible { display: grid; gap: 16px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--accent); }
+  .glossary table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .glossary th, .glossary td {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .glossary th { color: var(--muted); font-weight: 500; }
+  .glossary td:first-child { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--accent); }
+  .downloads { display: flex; gap: 12px; flex-wrap: wrap; }
+  .downloads a {
+    background: var(--panel-2);
+    color: var(--text);
+    text-decoration: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .downloads a:hover { border-color: var(--accent); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .err {
+    background: rgba(255,118,118,0.08);
+    border-color: rgba(255,118,118,0.3);
+    color: var(--bad);
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>📘 STEM Textbook Translator</h1>
+    <span class="sub">Upstage Document Parse · Solar LLM · n8n orchestration</span>
+    <span class="badge" id="modeBadge">checking mode…</span>
+  </header>
+
+  <main>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".pdf" />
+      <div class="icon">📄</div>
+      <h2>PDF를 끌어다 놓거나 클릭해서 선택</h2>
+      <p>이공계 영어 원서 PDF · 최대 ~100MB 권장</p>
+    </label>
+
+    <div class="controls">
+      <label>제목 <input type="text" id="title" placeholder="(파일명 그대로 사용)" /></label>
+      <label><input type="checkbox" id="wantPdf" /> PDF로도 출력</label>
+      <button class="primary" id="go" disabled>번역 시작</button>
+      <span class="meta" id="fileLabel"></span>
+    </div>
+
+    <div class="stages" id="stages">
+      <div class="stage" data-k="upload"><span class="dot"></span><span>① 업로드</span></div>
+      <div class="stage" data-k="parse"><span class="dot"></span><span>② Document Parse</span></div>
+      <div class="stage" data-k="glossary"><span class="dot"></span><span>③ 용어집 추출</span></div>
+      <div class="stage" data-k="translate"><span class="dot"></span><span>④ 번역</span></div>
+      <div class="stage" data-k="docx"><span class="dot"></span><span>⑤ DOCX 조립</span></div>
+    </div>
+
+    <div class="results" id="results">
+      <div class="card">
+        <h3>처리 결과</h3>
+        <div class="meta" id="summary"></div>
+        <div class="downloads" id="downloads"></div>
+      </div>
+      <div class="card glossary">
+        <h3>추출된 용어집 (2-Pass 일관성 적용)</h3>
+        <table>
+          <thead><tr><th>English</th><th>Korean</th></tr></thead>
+          <tbody id="glossaryBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const fileLabel = document.getElementById('fileLabel');
+const goBtn = document.getElementById('go');
+const titleInput = document.getElementById('title');
+const wantPdf = document.getElementById('wantPdf');
+const stages = document.getElementById('stages');
+const results = document.getElementById('results');
+const summary = document.getElementById('summary');
+const downloads = document.getElementById('downloads');
+const glossaryBody = document.getElementById('glossaryBody');
+const modeBadge = document.getElementById('modeBadge');
+
+let chosen = null;
+
+fetch('/mode').then(r => r.json()).then(d => {
+  modeBadge.textContent = d.mock ? 'MOCK 모드 (API 미연결)' : 'LIVE 모드';
+  modeBadge.style.color = d.mock ? 'var(--warn)' : 'var(--good)';
+});
+
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('hover');
+}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('hover');
+}));
+drop.addEventListener('drop', e => {
+  if (e.dataTransfer.files[0]) handlePick(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handlePick(e.target.files[0]);
+});
+
+function handlePick(f) {
+  chosen = f;
+  fileLabel.textContent = `${f.name} (${(f.size/1024/1024).toFixed(2)} MB)`;
+  goBtn.disabled = false;
+}
+
+function setStage(key, state) {
+  for (const el of stages.querySelectorAll('.stage')) {
+    if (el.dataset.k === key) {
+      el.classList.remove('active','done');
+      if (state) el.classList.add(state);
+    }
+  }
+}
+function resetStages() {
+  for (const el of stages.querySelectorAll('.stage')) el.classList.remove('active','done');
+  results.classList.remove('visible');
+}
+
+goBtn.addEventListener('click', async () => {
+  if (!chosen) return;
+  resetStages();
+  goBtn.disabled = true;
+
+  // The /translate endpoint runs synchronously; we drive the stage UI
+  // with optimistic progress while the request is in flight.
+  setStage('upload','active');
+  const fd = new FormData();
+  fd.append('file', chosen);
+  if (titleInput.value) fd.append('title', titleInput.value);
+  fd.append('want_pdf', wantPdf.checked ? 'true' : 'false');
+
+  const t = setInterval(() => {
+    const order = ['upload','parse','glossary','translate','docx'];
+    const activeIdx = order.findIndex(k => document.querySelector(`.stage[data-k=${k}].active`));
+    if (activeIdx < 0) return;
+    document.querySelector(`.stage[data-k=${order[activeIdx]}]`).classList.remove('active');
+    document.querySelector(`.stage[data-k=${order[activeIdx]}]`).classList.add('done');
+    if (activeIdx + 1 < order.length) {
+      document.querySelector(`.stage[data-k=${order[activeIdx+1]}]`).classList.add('active');
+    }
+  }, 1400);
+
+  try {
+    const resp = await fetch('/translate', { method: 'POST', body: fd });
+    clearInterval(t);
+    if (!resp.ok) throw new Error(`server ${resp.status}: ${await resp.text()}`);
+    const data = await resp.json();
+    for (const el of stages.querySelectorAll('.stage')) {
+      el.classList.remove('active');
+      el.classList.add('done');
+    }
+    renderResults(data);
+  } catch (err) {
+    clearInterval(t);
+    summary.innerHTML = `<span style="color: var(--bad)">실패: ${err.message}</span>`;
+    results.classList.add('visible');
+    downloads.innerHTML = '';
+    glossaryBody.innerHTML = '';
+  } finally {
+    goBtn.disabled = false;
+  }
+});
+
+function renderResults(data) {
+  summary.textContent =
+    `job ${data.job_id} · 요소 ${data.element_count}개 처리 · 용어 ${Object.keys(data.glossary||{}).length}개 추출`;
+  downloads.innerHTML = '';
+  if (data.download_docx) {
+    const a = document.createElement('a');
+    a.href = data.download_docx; a.textContent = '📝 DOCX 다운로드';
+    downloads.appendChild(a);
+  }
+  if (data.download_pdf) {
+    const a = document.createElement('a');
+    a.href = data.download_pdf; a.textContent = '📕 PDF 다운로드';
+    downloads.appendChild(a);
+  }
+  glossaryBody.innerHTML = '';
+  const entries = Object.entries(data.glossary || {});
+  if (entries.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan=2 class="meta">추출된 용어가 없습니다</td>';
+    glossaryBody.appendChild(tr);
+  }
+  for (const [en, ko] of entries) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${escapeHtml(en)}</td><td>${escapeHtml(ko)}</td>`;
+    glossaryBody.appendChild(tr);
+  }
+  results.classList.add('visible');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+</script>
+</body>
+</html>

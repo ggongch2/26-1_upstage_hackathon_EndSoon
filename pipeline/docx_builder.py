@@ -73,10 +73,16 @@ _LATEX_INLINE = re.compile(r"(\$[^$\n]+\$|\\\([^)]+\\\))")
 
 
 def _add_equation_paragraph(doc: Document, text: str) -> None:
+    """Render LaTeX as a real Word equation (OMML) when possible; else as math-font text."""
+    from .math_render import insert_math_into_paragraph
+
     p = doc.add_paragraph()
+    if insert_math_into_paragraph(p, text):
+        return
     run = p.add_run(text)
     run.font.name = "Cambria Math"
     run.font.size = Pt(12)
+    run.italic = True
 
 
 def build_docx(
@@ -135,18 +141,78 @@ def build_docx(
     return output_path
 
 
-def docx_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> Path | None:
-    """Optional PDF export — requires MS Word installed (docx2pdf, Windows/Mac)."""
+def _try_docx2pdf(docx_path: Path, pdf_path: Path) -> bool:
     try:
         from docx2pdf import convert
     except ImportError:
-        log.warning("docx2pdf not available; skipping PDF export")
-        return None
-    docx_path = Path(docx_path)
-    pdf_path = Path(pdf_path) if pdf_path else docx_path.with_suffix(".pdf")
+        return False
     try:
         convert(str(docx_path), str(pdf_path))
     except Exception:
         log.exception("docx2pdf conversion failed")
-        return None
-    return pdf_path
+        return False
+    return pdf_path.exists()
+
+
+def _find_soffice() -> str | None:
+    import shutil
+
+    for name in ("soffice", "libreoffice", "soffice.exe"):
+        path = shutil.which(name)
+        if path:
+            return path
+    candidates = [
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "/usr/bin/soffice",
+        "/usr/bin/libreoffice",
+    ]
+    for c in candidates:
+        if Path(c).exists():
+            return c
+    return None
+
+
+def _try_libreoffice(docx_path: Path, pdf_path: Path) -> bool:
+    import subprocess
+
+    soffice = _find_soffice()
+    if not soffice:
+        return False
+    out_dir = pdf_path.parent
+    try:
+        subprocess.run(
+            [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
+            check=True,
+            timeout=180,
+            capture_output=True,
+        )
+    except Exception:
+        log.exception("LibreOffice conversion failed")
+        return False
+    produced = out_dir / (docx_path.stem + ".pdf")
+    if produced.exists() and produced != pdf_path:
+        produced.replace(pdf_path)
+    return pdf_path.exists()
+
+
+def docx_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> Path | None:
+    """Convert DOCX to PDF, trying docx2pdf first then LibreOffice headless.
+
+    docx2pdf works on Windows/macOS with MS Word installed.
+    LibreOffice headless works on Linux/Docker and any host that has it.
+    Returns the produced PDF path, or None if no backend succeeded.
+    """
+    docx_path = Path(docx_path)
+    pdf_path = Path(pdf_path) if pdf_path else docx_path.with_suffix(".pdf")
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if _try_docx2pdf(docx_path, pdf_path):
+        log.info("PDF produced via docx2pdf: %s", pdf_path)
+        return pdf_path
+    if _try_libreoffice(docx_path, pdf_path):
+        log.info("PDF produced via LibreOffice: %s", pdf_path)
+        return pdf_path
+    log.warning("No PDF backend available; install MS Word or LibreOffice")
+    return None
