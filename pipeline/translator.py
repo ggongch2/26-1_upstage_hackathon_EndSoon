@@ -37,8 +37,10 @@ TRANSLATE_SYSTEM = (
     "ABSOLUTE RULES — violating any of these makes the output unusable:\n"
     "1. Output EXACTLY ONE translation. NEVER multiple drafts, variants, alternatives, "
     "or 'final versions'. Pick the single best Korean rendering and stop.\n"
-    "2. NO commentary, NO meta-explanations, NO translator notes, NO markdown headings "
-    "like '**최종 번역:**' or '**다음 번역:**'. Output the translation as plain prose only.\n"
+    "2. NO commentary, NO meta-explanations, NO translator notes — in ANY language. "
+    "Forbidden examples include but are not limited to: '**최종 번역:**', '**번역:**', "
+    "'[정확한 번역]', 'However, to strictly adhere…', 'This preserves the exact…', "
+    "'Note:', '(※ …)'. Output the translation as plain Korean prose only.\n"
     "3. NO horizontal rules ('---'), NO bullet lists explaining choices, NO parenthetical "
     "asides discussing terminology decisions. Just the translation.\n"
     "4. Preserve any LaTeX (\\$...\\$, \\$\\$...\\$\\$, \\\\(...\\\\), \\\\[...\\\\]) and placeholders "
@@ -212,15 +214,27 @@ def _translate_text(
 
 
 _HR_RE = re.compile(r"(?m)^\s*-{3,}\s*$")
-# A markdown bold header like '**번역:**', '**수정 요청 사항:**'. When this appears
-# anywhere in the answer, the model has switched from translating to commentary and
-# everything from that point on is unreliable.
-# Matches headers like '**번역:**', '**수정 요청 사항:**' where the colon lives
-# INSIDE the bold delimiters. Also matches the variant '**번역**:' with colon outside.
-_META_HEADER_RE = re.compile(
-    r"\*\*\s*[^\n*]{1,40}?[:：]\s*\*\*"
-    r"|\*\*\s*[^\n*]{1,40}?\s*\*\*\s*[:：]"
-)
+# Multiple meta-marker patterns. Each one signals "the model stopped translating
+# and started commenting"; we truncate at the earliest hit.
+_META_PATTERNS = [
+    re.compile(r"\*\*\s*[^\n*]{1,40}?[:：]\s*\*\*"),                    # **번역:**
+    re.compile(r"\*\*\s*[^\n*]{1,40}?\s*\*\*\s*[:：]"),                 # **번역**:
+    re.compile(r"\[\s*(?:정확한|대안|최종|개선된|수정|두\s*번째|또\s*다른|참고|예시)\s*번역\s*\]"),
+    re.compile(r"However,\s+to\s+strictly\s+adhere", re.IGNORECASE),
+    re.compile(r"However,\s+the\s+translation", re.IGNORECASE),
+    re.compile(r"This\s+preserves\s+the\s+exact", re.IGNORECASE),
+    re.compile(r"To\s+strictly\s+adhere\s+to", re.IGNORECASE),
+    re.compile(r"\(\s*※"),                                              # (※ ...)
+]
+
+
+def _find_first_meta(text: str) -> "re.Match[str] | None":
+    earliest = None
+    for r in _META_PATTERNS:
+        m = r.search(text)
+        if m and (earliest is None or m.start() < earliest.start()):
+            earliest = m
+    return earliest
 
 
 def _clean_model_output(out: str) -> str:
@@ -234,7 +248,7 @@ def _clean_model_output(out: str) -> str:
     out = re.sub(r"^---\s*", "", out)
     out = re.sub(r"\s*---$", "", out)
     out = _HR_RE.sub("", out)
-    m = _META_HEADER_RE.search(out)
+    m = _find_first_meta(out)
     if m:
         out = out[: m.start()].rstrip()
     parts = re.split(r"\n\s*\n", out)
