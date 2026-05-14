@@ -32,21 +32,26 @@ TABLE_CATEGORIES = {"table"}
 
 def _add_image_from_base64(doc: Document, b64: str, max_width_inches: float = 5.5) -> bool:
     if not b64:
+        log.warning("image: empty base64 — skipped")
         return False
-    data = b64
-    if "," in data:
+    data = b64.strip()
+    if data.startswith("data:") and "," in data:
         data = data.split(",", 1)[1]
     try:
-        raw = base64.b64decode(data)
-    except Exception:
-        log.warning("invalid base64 image; skipping")
+        raw = base64.b64decode(data, validate=False)
+    except Exception as e:
+        log.warning("image: base64 decode failed (%s); first 30 chars=%r", e, b64[:30])
+        return False
+    if len(raw) < 64:
+        log.warning("image: decoded bytes too small (%d) — likely placeholder, skipping", len(raw))
         return False
     bio = BytesIO(raw)
     try:
         doc.add_picture(bio, width=Inches(max_width_inches))
+        log.info("image: inserted (%d bytes)", len(raw))
         return True
-    except Exception:
-        log.exception("add_picture failed; skipping image")
+    except Exception as e:
+        log.warning("image: add_picture failed (%s); first 8 bytes hex=%s", e, raw[:8].hex())
         return False
 
 
@@ -80,9 +85,25 @@ _INLINE_MATH_RE = re.compile(
 )
 
 
+def _extract_latex_from_html(html: str) -> str:
+    """Document Parse sometimes returns equations with text='' and the LaTeX only in
+    <p>...$$...$$...</p>. Strip the HTML wrapper to recover the raw LaTeX."""
+    if not html:
+        return ""
+    try:
+        soup = BeautifulSoup(html, "lxml")
+        return soup.get_text(strip=False).strip()
+    except Exception:
+        return html
+
+
 def _add_equation_paragraph(doc: Document, text: str) -> None:
     """Render LaTeX as a real Word equation (OMML) when possible; else as math-font text."""
     from .math_render import insert_math_into_paragraph
+
+    text = (text or "").strip()
+    if not text:
+        return
 
     p = doc.add_paragraph()
     if insert_math_into_paragraph(p, text):
@@ -184,7 +205,10 @@ def build_docx(
             continue
 
         if cat == "equation":
-            _add_equation_paragraph(doc, elem.text or elem.markdown)
+            latex = (elem.text or elem.markdown or "").strip()
+            if not latex:
+                latex = _extract_latex_from_html(elem.html)
+            _add_equation_paragraph(doc, latex)
             continue
 
         if cat in HEADING_LEVELS:
