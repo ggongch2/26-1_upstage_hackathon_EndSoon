@@ -42,9 +42,15 @@ TRANSLATE_SYSTEM = (
     "4. Preserve any LaTeX (\\$...\\$, \\$\\$...\\$\\$, \\\\(...\\\\), \\\\[...\\\\]) and placeholders "
     "like ⟦M0⟧ EXACTLY — byte for byte.\n"
     "5. Preserve inline code, identifiers, numbers, units, and equation references verbatim.\n"
-    "6. Honor the supplied terminology mapping strictly.\n\n"
-    "If the input is short, the output should be short too. If the input is one sentence, "
-    "the output is one sentence."
+    "6. Honor the supplied terminology mapping strictly.\n"
+    "7. DO NOT add markdown bold (**term**). The source is plain prose; emphasis is "
+    "NOT to be invented. Output plain text only.\n"
+    "8. STAY CLOSE TO SOURCE LENGTH. Output should be roughly the same length as the input. "
+    "DO NOT elaborate, expand, add background context, paraphrase generously, or invent "
+    "content. If the source is broken OCR or one short phrase, translate literally — "
+    "never substitute your own elaboration.\n\n"
+    "If the input is short, the output is short. If the input is one sentence, the output "
+    "is one sentence."
 )
 
 
@@ -102,7 +108,15 @@ def _translate_text(solar: SolarClient, glossary: Glossary, text: str) -> str:
     if not text:
         return ""
     protected, saved = _protect_latex(text)
-    out = solar.chat(messages=_user_prompt(glossary, protected), temperature=0.0)
+    # Hard cap output length proportional to input — prevents the model from
+    # writing a multi-paragraph elaboration when the source is a single phrase.
+    # Korean is ~1 token/char so this gives a generous ~3x buffer.
+    max_tokens = max(120, len(protected) * 3)
+    out = solar.chat(
+        messages=_user_prompt(glossary, protected),
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
     out = _clean_model_output(out)
     out = _restore_latex(out, saved)
     return glossary.apply(out)
@@ -123,7 +137,10 @@ _META_HEADER_RE = re.compile(
 def _clean_model_output(out: str) -> str:
     """Strip Solar's meta-commentary. Strategy: locate the first markdown section-header
     of the form '**...:**' and truncate the response there — the prose before it is
-    almost always the actual translation, everything after is rambling."""
+    almost always the actual translation, everything after is rambling.
+
+    Also strips remaining '**term**' bold markers (the model loves to emphasize every
+    technical term, which is not how textbook prose reads)."""
     out = out.strip()
     out = re.sub(r"^---\s*", "", out)
     out = re.sub(r"\s*---$", "", out)
@@ -139,6 +156,8 @@ def _clean_model_output(out: str) -> str:
             if not (p.startswith("(") and p.endswith(")") and ("번역" in p or "translation" in p.lower()))
         ]
         out = "\n\n".join(parts) if parts else out
+    # Strip remaining '**term**' bold abuse — keep content, drop the markers.
+    out = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", out)
     return out.strip()
 
 
