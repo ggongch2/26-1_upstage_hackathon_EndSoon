@@ -67,25 +67,36 @@ def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | Non
         parsed = parser.parse(work_path)
         log.info("job %s :: %d elements parsed", job_id, len(parsed.elements))
 
-        # Dump raw response for debugging — category counts, sample elements per category.
+        # Dump raw response for debugging — category counts + first raw element of each
+        # category with long string fields truncated. This is the file to share when
+        # debugging "why isn't <thing> coming through".
         try:
             import json
             from collections import Counter
+
+            def _truncate(v):  # type: ignore[no-untyped-def]
+                if isinstance(v, str):
+                    return v if len(v) <= 400 else v[:400] + f"…(+{len(v)-400} chars)"
+                if isinstance(v, dict):
+                    return {k: _truncate(x) for k, x in v.items()}
+                if isinstance(v, list):
+                    return [_truncate(x) for x in v[:10]] + ([f"…(+{len(v)-10})"] if len(v) > 10 else [])
+                return v
+
             cats = Counter(e.category for e in parsed.elements)
-            samples: dict[str, list] = {}
+            raw_samples: dict[str, list] = {}
             for e in parsed.elements:
-                samples.setdefault(e.category, [])
-                if len(samples[e.category]) < 3:
-                    samples[e.category].append({
-                        "id": e.id, "page": e.page,
-                        "text": (e.text or "")[:300],
-                        "html": (e.html or "")[:300],
-                        "has_base64": bool(e.base64),
-                    })
+                bucket = raw_samples.setdefault(e.category, [])
+                if len(bucket) < 2:
+                    bucket.append(_truncate(e.raw))
+
             debug_path = OUTPUT_DIR / f"{job_id}_raw.json"
             debug_path.write_text(
                 json.dumps(
-                    {"category_counts": dict(cats), "samples_per_category": samples},
+                    {
+                        "category_counts": dict(cats),
+                        "raw_samples_per_category": raw_samples,
+                    },
                     ensure_ascii=False, indent=2,
                 ),
                 encoding="utf-8",

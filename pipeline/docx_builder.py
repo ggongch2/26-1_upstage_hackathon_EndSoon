@@ -75,7 +75,9 @@ def _add_html_table(doc: Document, html: str) -> None:
             table.cell(ri, ci).text = text
 
 
-_LATEX_INLINE = re.compile(r"(\$[^$\n]+\$|\\\([^)]+\\\))")
+_INLINE_MATH_RE = re.compile(
+    r"(\$\$[^$]+?\$\$|\\\[[\s\S]+?\\\]|\$[^$\n]+?\$|\\\([\s\S]+?\\\))"
+)
 
 
 def _add_equation_paragraph(doc: Document, text: str) -> None:
@@ -89,6 +91,31 @@ def _add_equation_paragraph(doc: Document, text: str) -> None:
     run.font.name = "Cambria Math"
     run.font.size = Pt(12)
     run.italic = True
+
+
+def _add_text_with_inline_math(doc: Document, text: str, *, style: str | None = None) -> None:
+    r"""Add a paragraph, splitting any inline LaTeX (\$...\$, \(...\), etc.) into real OMML runs."""
+    from .math_render import insert_math_into_paragraph
+
+    parts = _INLINE_MATH_RE.split(text)
+    if len(parts) == 1:
+        if style:
+            doc.add_paragraph(text, style=style)
+        else:
+            doc.add_paragraph(text)
+        return
+
+    p = doc.add_paragraph(style=style) if style else doc.add_paragraph()
+    for part in parts:
+        if not part:
+            continue
+        if _INLINE_MATH_RE.fullmatch(part):
+            if not insert_math_into_paragraph(p, part):
+                run = p.add_run(part)
+                run.italic = True
+                run.font.name = "Cambria Math"
+        else:
+            p.add_run(part)
 
 
 def _apply_korean_font_to_style(style, font_name: str) -> None:
@@ -169,13 +196,13 @@ def build_docx(
                 line = line.strip()
                 if not line:
                     continue
-                doc.add_paragraph(line.lstrip("-•* "), style="List Bullet")
+                _add_text_with_inline_math(doc, line.lstrip("-•* "), style="List Bullet")
             continue
 
         text = tr.translated_text.strip()
         if not text:
             continue
-        doc.add_paragraph(text)
+        _add_text_with_inline_math(doc, text)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

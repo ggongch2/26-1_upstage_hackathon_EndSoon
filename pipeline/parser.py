@@ -96,6 +96,26 @@ class DocumentParser:
         return self._build(payload)
 
     @staticmethod
+    def _extract_base64(raw: dict[str, Any]) -> str | None:
+        """Try several known shapes for the base64 image payload in Document Parse responses."""
+        for key in ("base64_encoding", "base64", "base64Image", "image_base64", "image"):
+            v = raw.get(key)
+            if isinstance(v, str) and v.strip():
+                return v
+            if isinstance(v, dict):
+                for inner in ("base64", "data", "value"):
+                    iv = v.get(inner)
+                    if isinstance(iv, str) and iv.strip():
+                        return iv
+        content = raw.get("content") or {}
+        if isinstance(content, dict):
+            for key in ("base64", "base64_encoding", "image"):
+                v = content.get(key)
+                if isinstance(v, str) and v.strip():
+                    return v
+        return None
+
+    @staticmethod
     def _build(payload: dict[str, Any]) -> ParsedDocument:
         elements: list[Element] = []
         for raw in payload.get("elements", []):
@@ -108,7 +128,7 @@ class DocumentParser:
                     text=content.get("text", "") or "",
                     html=content.get("html", "") or "",
                     markdown=content.get("markdown", "") or "",
-                    base64=raw.get("base64_encoding"),
+                    base64=DocumentParser._extract_base64(raw),
                     coordinates=raw.get("coordinates", []) or [],
                     raw=raw,
                 )
