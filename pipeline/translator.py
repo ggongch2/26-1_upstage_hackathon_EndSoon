@@ -214,6 +214,28 @@ def _translate_table_html(solar: SolarClient, glossary: Glossary, html: str) -> 
 CONTEXT_USABLE = {"paragraph", "heading1", "heading2", "heading3", "title", "list", "caption"}
 
 
+def _looks_like_ocr_garbage(text: str) -> bool:
+    """Heuristic: True if the paragraph is mostly OCR residue of a matrix or table
+    (lots of pipes / numbers / brackets, few real words). Such elements are not
+    meaningfully translatable and just clutter the output.
+
+    Rules (text must be ≥ 12 chars):
+    1. Pipe density: 3+ pipes AND pipes/length > 8%
+    2. Letter density: alpha+Hangul chars / total < 30%
+    """
+    s = (text or "").strip()
+    n = len(s)
+    if n < 12:
+        return False
+    pipes = s.count("|")
+    if pipes >= 3 and pipes / n > 0.08:
+        return True
+    letters = sum(1 for c in s if c.isalpha())
+    if letters / n < 0.30:
+        return True
+    return False
+
+
 def _translate_one(
     solar: SolarClient,
     glossary: Glossary,
@@ -232,9 +254,19 @@ def _translate_one(
             log.exception("table translate failed; keeping original")
             new_html = elem.html
         return TranslatedElement(elem, elem.text, new_html)
+
+    src = elem.text or elem.markdown
+    # Drop matrix/table OCR residue — saves an API call AND avoids ugly pipe
+    # garbage in the output. The empty translated_text causes docx_builder to
+    # skip the paragraph entirely.
+    if _looks_like_ocr_garbage(src):
+        log.info("translator: skipping OCR-garbage element id=%s page=%s text=%r",
+                 elem.id, elem.page, src[:60])
+        return TranslatedElement(elem, "", elem.html)
+
     try:
         translated = _translate_text(
-            solar, glossary, elem.text or elem.markdown,
+            solar, glossary, src,
             prev_context=prev_text, next_context=next_text,
         )
     except Exception:
