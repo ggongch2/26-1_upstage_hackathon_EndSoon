@@ -146,6 +146,22 @@
   }
   .downloads a:hover { border-color: var(--accent); }
   .meta { color: var(--muted); font-size: 12px; }
+  .progress-wrap { display: flex; flex-direction: column; gap: 8px; }
+  .progress-bar {
+    width: 100%; height: 8px; background: var(--panel-2);
+    border-radius: 999px; overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.3s ease;
+  }
+  .progress-meta {
+    display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+    font-size: 13px;
+  }
+  #progressCount { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--accent); }
   .err {
     background: rgba(255,118,118,0.08);
     border-color: rgba(255,118,118,0.3);
@@ -181,6 +197,19 @@
       <div class="stage" data-k="glossary"><span class="dot"></span><span>③ 용어집 추출</span></div>
       <div class="stage" data-k="translate"><span class="dot"></span><span>④ 번역</span></div>
       <div class="stage" data-k="docx"><span class="dot"></span><span>⑤ DOCX 조립</span></div>
+      <div class="stage" data-k="pdf"><span class="dot"></span><span>⑥ PDF 변환</span></div>
+    </div>
+
+    <div class="card" id="progressCard" style="display:none">
+      <h3 id="progressTitle">진행 중…</h3>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-meta">
+          <span id="progressCount">0 / 0</span>
+          <span class="meta" id="progressMessage"></span>
+          <span class="meta" id="progressElapsed"></span>
+        </div>
+      </div>
     </div>
 
     <div class="results" id="results">
@@ -239,55 +268,110 @@ function handlePick(f) {
   goBtn.disabled = false;
 }
 
-function setStage(key, state) {
-  for (const el of stages.querySelectorAll('.stage')) {
-    if (el.dataset.k === key) {
-      el.classList.remove('active','done');
-      if (state) el.classList.add(state);
-    }
-  }
-}
 function resetStages() {
   for (const el of stages.querySelectorAll('.stage')) el.classList.remove('active','done');
   results.classList.remove('visible');
+  progressFill.style.width = '0%';
+  progressCount.textContent = '0 / 0';
+  progressMessage.textContent = '';
+  progressElapsed.textContent = '';
+}
+
+const STAGE_ORDER = ['upload','parse','glossary','translate','docx','pdf'];
+const STAGE_LABEL = {
+  upload: '업로드',
+  parse: 'Document Parse 호출',
+  glossary: '용어집 추출',
+  translate: '요소별 번역',
+  docx: 'Word 문서 조립',
+  pdf: 'PDF 변환',
+};
+
+const progressCard = document.getElementById('progressCard');
+const progressTitle = document.getElementById('progressTitle');
+const progressFill = document.getElementById('progressFill');
+const progressCount = document.getElementById('progressCount');
+const progressMessage = document.getElementById('progressMessage');
+const progressElapsed = document.getElementById('progressElapsed');
+
+function applyStageState(currentStage) {
+  const curIdx = STAGE_ORDER.indexOf(currentStage);
+  for (const el of stages.querySelectorAll('.stage')) {
+    const k = el.dataset.k;
+    const idx = STAGE_ORDER.indexOf(k);
+    el.classList.remove('active','done');
+    if (idx < curIdx) el.classList.add('done');
+    else if (idx === curIdx) el.classList.add('active');
+  }
+}
+
+function fmtElapsed(sec) {
+  if (sec == null) return '';
+  sec = Math.floor(sec);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+}
+
+async function pollProgress(jobId) {
+  while (true) {
+    let snap;
+    try {
+      const r = await fetch(`/jobs/${jobId}/progress`);
+      if (!r.ok) throw new Error(`progress ${r.status}`);
+      snap = await r.json();
+    } catch (err) {
+      throw new Error('진행 상황 조회 실패: ' + err.message);
+    }
+
+    if (snap.stage === 'done') {
+      applyStageState('pdf');
+      for (const el of stages.querySelectorAll('.stage')) el.classList.add('done');
+      progressFill.style.width = '100%';
+      progressCount.textContent = `${snap.total} / ${snap.total}`;
+      progressMessage.textContent = '완료';
+      progressElapsed.textContent = `걸린 시간: ${fmtElapsed(snap.elapsed)}`;
+      return snap.result;
+    }
+    if (snap.stage === 'error') {
+      throw new Error(snap.error || '알 수 없는 오류');
+    }
+
+    applyStageState(snap.stage);
+    const total = snap.total || 0;
+    const done = snap.processed || 0;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    progressFill.style.width = (total > 0 ? pct : 5) + '%';
+    progressCount.textContent = total > 0 ? `${done} / ${total} (${pct}%)` : '준비 중…';
+    progressTitle.textContent = `진행 중 — ${STAGE_LABEL[snap.stage] || snap.stage}`;
+    progressMessage.textContent = snap.message || '';
+    progressElapsed.textContent = `${fmtElapsed(snap.elapsed)} 경과`;
+
+    await new Promise(r => setTimeout(r, 500));
+  }
 }
 
 goBtn.addEventListener('click', async () => {
   if (!chosen) return;
   resetStages();
   goBtn.disabled = true;
+  progressCard.style.display = 'block';
+  applyStageState('upload');
 
-  // The /translate endpoint runs synchronously; we drive the stage UI
-  // with optimistic progress while the request is in flight.
-  setStage('upload','active');
   const fd = new FormData();
   fd.append('file', chosen);
   if (titleInput.value) fd.append('title', titleInput.value);
   fd.append('want_pdf', wantPdf.checked ? 'true' : 'false');
 
-  const t = setInterval(() => {
-    const order = ['upload','parse','glossary','translate','docx'];
-    const activeIdx = order.findIndex(k => document.querySelector(`.stage[data-k=${k}].active`));
-    if (activeIdx < 0) return;
-    document.querySelector(`.stage[data-k=${order[activeIdx]}]`).classList.remove('active');
-    document.querySelector(`.stage[data-k=${order[activeIdx]}]`).classList.add('done');
-    if (activeIdx + 1 < order.length) {
-      document.querySelector(`.stage[data-k=${order[activeIdx+1]}]`).classList.add('active');
-    }
-  }, 1400);
-
   try {
-    const resp = await fetch('/translate', { method: 'POST', body: fd });
-    clearInterval(t);
-    if (!resp.ok) throw new Error(`server ${resp.status}: ${await resp.text()}`);
-    const data = await resp.json();
-    for (const el of stages.querySelectorAll('.stage')) {
-      el.classList.remove('active');
-      el.classList.add('done');
+    const submit = await fetch('/translate', { method: 'POST', body: fd });
+    if (!submit.ok && submit.status !== 202) {
+      throw new Error(`server ${submit.status}: ${await submit.text()}`);
     }
-    renderResults(data);
+    const { job_id } = await submit.json();
+    const result = await pollProgress(job_id);
+    renderResults(result);
   } catch (err) {
-    clearInterval(t);
     summary.innerHTML = `<span style="color: var(--bad)">실패: ${err.message}</span>`;
     results.classList.add('visible');
     downloads.innerHTML = '';

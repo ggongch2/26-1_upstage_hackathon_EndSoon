@@ -12,7 +12,8 @@
       "Bash(git commit -m ' *)",
       "Bash(git commit *)",
       "Bash(python -m py_compile pipeline/solar.py pipeline/glossary.py)",
-      "Bash(python -m py_compile pipeline/translator.py)"
+      "Bash(python -m py_compile pipeline/translator.py)",
+      "Bash(python -m py_compile main.py pipeline/jobs.py pipeline/glossary.py pipeline/translator.py)"
     ]
   }
 }

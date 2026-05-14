@@ -10,8 +10,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from typing import Callable
 
 from .solar import SolarClient
+
+ProgressCb = Callable[[int, int], None]
 
 log = logging.getLogger(__name__)
 
@@ -85,9 +88,13 @@ def build_glossary(
     *,
     chunk_size: int = 6000,
     max_chunks: int = 3,
+    on_progress: ProgressCb | None = None,
 ) -> Glossary:
     chunks = _chunk(full_text, size=chunk_size)[:max_chunks]
+    total = len(chunks)
     merged: dict[str, str] = {}
+    if on_progress:
+        on_progress(0, total)
     for i, chunk in enumerate(chunks, 1):
         try:
             content = solar.chat(
@@ -99,10 +106,14 @@ def build_glossary(
                 response_format={"type": "json_object"},
             )
         except Exception as e:
-            log.warning("glossary chunk %d/%d failed (%s); continuing", i, len(chunks), e)
+            log.warning("glossary chunk %d/%d failed (%s); continuing", i, total, e)
+            if on_progress:
+                on_progress(i, total)
             continue
         chunk_map = _parse_json_loose(content)
         for k, v in chunk_map.items():
             merged.setdefault(k, v)
-        log.info("glossary chunk %d/%d :: +%d terms (total=%d)", i, len(chunks), len(chunk_map), len(merged))
+        log.info("glossary chunk %d/%d :: +%d terms (total=%d)", i, total, len(chunk_map), len(merged))
+        if on_progress:
+            on_progress(i, total)
     return Glossary(mapping=merged)

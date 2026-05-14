@@ -14,7 +14,9 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
+
+ProgressCb = Callable[[int, int], None]
 
 from bs4 import BeautifulSoup, NavigableString
 
@@ -121,18 +123,29 @@ def translate_elements(
     solar: SolarClient,
     glossary: Glossary,
     elements: Iterable[Element],
+    *,
+    on_progress: ProgressCb | None = None,
 ) -> list[TranslatedElement]:
     items = list(elements)
+    total = len(items)
     try:
         workers = max(1, int(os.environ.get("TRANSLATE_WORKERS", "5")))
     except ValueError:
         workers = 5
 
-    if workers == 1 or len(items) <= 1:
-        return [_translate_one(solar, glossary, e) for e in items]
+    if on_progress:
+        on_progress(0, total)
 
-    results: list[TranslatedElement | None] = [None] * len(items)
-    log_every = max(1, len(items) // 20)  # ~5% increments
+    if workers == 1 or total <= 1:
+        out: list[TranslatedElement] = []
+        for i, e in enumerate(items, 1):
+            out.append(_translate_one(solar, glossary, e))
+            if on_progress:
+                on_progress(i, total)
+        return out
+
+    results: list[TranslatedElement | None] = [None] * total
+    log_every = max(1, total // 20)  # ~5% increments
     completed = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {
@@ -148,7 +161,9 @@ def translate_elements(
                 e = items[idx]
                 results[idx] = TranslatedElement(e, e.text, e.html)
             completed += 1
-            if completed % log_every == 0 or completed == len(items):
-                log.info("translated %d/%d elements (workers=%d)", completed, len(items), workers)
+            if on_progress:
+                on_progress(completed, total)
+            if completed % log_every == 0 or completed == total:
+                log.info("translated %d/%d elements (workers=%d)", completed, total, workers)
 
     return [r for r in results if r is not None]

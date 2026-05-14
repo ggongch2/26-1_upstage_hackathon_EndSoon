@@ -1,8 +1,9 @@
-"""FastAPI entrypoint: PDF in → translated DOCX (and optional PDF) out."""
+"""FastAPI entrypoint: PDF in → async translation pipeline with real-time progress."""
 from __future__ import annotations
 
 import logging
 import os
+import threading
 import uuid
 from pathlib import Path
 
@@ -12,11 +13,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from pipeline import docx_builder, glossary as glossary_mod, mocks, parser as parser_mod, solar as solar_mod
+from pipeline.jobs import REGISTRY
 from pipeline.translator import translate_elements
 
 
 def _truthy(val: str | None) -> bool:
     return (val or "").strip().lower() in {"1", "true", "yes", "on"}
+
 
 load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -49,6 +52,72 @@ def mode() -> dict[str, bool]:
     return {"mock": _truthy(os.environ.get("MOCK_MODE"))}
 
 
+def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | None) -> None:
+    mock_mode = _truthy(os.environ.get("MOCK_MODE"))
+    try:
+        try:
+            parser = mocks.MockParser() if mock_mode else parser_mod.from_env()
+            solar = mocks.MockSolar() if mock_mode else solar_mod.from_env()
+        except RuntimeError as e:
+            REGISTRY.fail(job_id, str(e))
+            return
+
+        REGISTRY.set_stage(job_id, "parse", message="Document Parse 호출 중…")
+        log.info("job %s :: Document Parse start (mock=%s)", job_id, mock_mode)
+        parsed = parser.parse(work_path)
+        log.info("job %s :: %d elements parsed", job_id, len(parsed.elements))
+
+        REGISTRY.set_stage(
+            job_id, "glossary", total=0, message=f"{len(parsed.elements)}개 요소에서 용어집 추출"
+        )
+        if mock_mode:
+            glossary = mocks.fake_glossary()
+        else:
+            def _gloss_cb(done: int, total: int) -> None:
+                REGISTRY.update(job_id, processed=done, total=total)
+
+            glossary = glossary_mod.build_glossary(solar, parsed.full_text, on_progress=_gloss_cb)
+        log.info("job %s :: glossary terms=%d", job_id, len(glossary.mapping))
+
+        REGISTRY.set_stage(
+            job_id,
+            "translate",
+            total=len(parsed.elements),
+            message=f"{len(glossary.mapping)}개 용어로 일관 번역",
+        )
+
+        def _trans_cb(done: int, total: int) -> None:
+            REGISTRY.update(job_id, processed=done, total=total)
+
+        translated = translate_elements(solar, glossary, parsed.elements, on_progress=_trans_cb)
+
+        REGISTRY.set_stage(job_id, "docx", message="Word 문서 조립 중")
+        out_docx = OUTPUT_DIR / f"{job_id}_translated.docx"
+        docx_builder.build_docx(translated, out_docx, title=title or work_path.stem)
+        log.info("job %s :: wrote %s", job_id, out_docx)
+
+        out_pdf = None
+        if want_pdf:
+            REGISTRY.set_stage(job_id, "pdf", message="PDF 변환 중")
+            out_pdf = docx_builder.docx_to_pdf(out_docx)
+            log.info("job %s :: pdf=%s", job_id, out_pdf)
+
+        result = {
+            "job_id": job_id,
+            "docx": str(out_docx),
+            "pdf": str(out_pdf) if out_pdf else None,
+            "glossary": glossary.mapping,
+            "element_count": len(parsed.elements),
+            "download_docx": f"/download/{out_docx.name}",
+            "download_pdf": f"/download/{out_pdf.name}" if out_pdf else None,
+        }
+        REGISTRY.finish(job_id, result)
+        log.info("job %s :: done", job_id)
+    except Exception as e:
+        log.exception("job %s :: pipeline failed", job_id)
+        REGISTRY.fail(job_id, f"{type(e).__name__}: {e}")
+
+
 @app.post("/translate")
 async def translate(
     file: UploadFile = File(...),
@@ -63,47 +132,26 @@ async def translate(
     work_path.write_bytes(await file.read())
     log.info("job %s :: saved upload to %s", job_id, work_path)
 
-    mock_mode = _truthy(os.environ.get("MOCK_MODE"))
-    try:
-        parser = mocks.MockParser() if mock_mode else parser_mod.from_env()
-        solar = mocks.MockSolar() if mock_mode else solar_mod.from_env()
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
+    REGISTRY.create(job_id)
+    REGISTRY.set_stage(job_id, "upload", message=f"{file.filename} 수신 완료")
 
-    log.info("job %s :: Document Parse start (mock=%s)", job_id, mock_mode)
-    parsed = parser.parse(work_path)
-    log.info("job %s :: %d elements parsed", job_id, len(parsed.elements))
-
-    log.info("job %s :: building glossary", job_id)
-    if mock_mode:
-        glossary = mocks.fake_glossary()
-    else:
-        glossary = glossary_mod.build_glossary(solar, parsed.full_text)
-    log.info("job %s :: glossary terms=%d", job_id, len(glossary.mapping))
-
-    log.info("job %s :: translating elements", job_id)
-    translated = translate_elements(solar, glossary, parsed.elements)
-
-    out_docx = OUTPUT_DIR / f"{job_id}_translated.docx"
-    docx_builder.build_docx(translated, out_docx, title=title or work_path.stem)
-    log.info("job %s :: wrote %s", job_id, out_docx)
-
-    out_pdf = None
-    if want_pdf:
-        out_pdf = docx_builder.docx_to_pdf(out_docx)
-        log.info("job %s :: pdf=%s", job_id, out_pdf)
-
-    return JSONResponse(
-        {
-            "job_id": job_id,
-            "docx": str(out_docx),
-            "pdf": str(out_pdf) if out_pdf else None,
-            "glossary": glossary.mapping,
-            "element_count": len(parsed.elements),
-            "download_docx": f"/download/{out_docx.name}",
-            "download_pdf": f"/download/{out_pdf.name}" if out_pdf else None,
-        }
+    thread = threading.Thread(
+        target=_run_pipeline,
+        args=(job_id, work_path, want_pdf, title),
+        daemon=True,
+        name=f"pipeline-{job_id}",
     )
+    thread.start()
+
+    return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=202)
+
+
+@app.get("/jobs/{job_id}/progress")
+def job_progress(job_id: str) -> JSONResponse:
+    state = REGISTRY.get(job_id)
+    if state is None:
+        raise HTTPException(404, "job not found")
+    return JSONResponse(state.to_dict())
 
 
 @app.get("/download/{name}")
