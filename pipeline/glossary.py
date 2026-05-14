@@ -1,15 +1,19 @@
 """Build a terminology glossary so chapter-wide translations stay consistent.
 
 전체 텍스트를 Solar에 넘겨 핵심 전문 용어(영어 원문 → 권장 한국어 번역)를
-JSON으로 받는다. 긴 문서는 청크로 나눠 추출 후 병합한다.
+JSON으로 받는다. 긴 문서는 청크로 나눠 추출 후 병합하며, 개별 청크가
+타임아웃되어도 다른 청크 결과로 진행한다.
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 
 from .solar import SolarClient
+
+log = logging.getLogger(__name__)
 
 GLOSSARY_SYSTEM = (
     "You are a domain-aware terminology extractor for STEM textbooks. "
@@ -80,20 +84,25 @@ def build_glossary(
     full_text: str,
     *,
     chunk_size: int = 6000,
-    max_chunks: int = 6,
+    max_chunks: int = 3,
 ) -> Glossary:
     chunks = _chunk(full_text, size=chunk_size)[:max_chunks]
     merged: dict[str, str] = {}
-    for chunk in chunks:
-        content = solar.chat(
-            messages=[
-                {"role": "system", "content": GLOSSARY_SYSTEM},
-                {"role": "user", "content": GLOSSARY_USER_TMPL.format(chunk=chunk)},
-            ],
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
+    for i, chunk in enumerate(chunks, 1):
+        try:
+            content = solar.chat(
+                messages=[
+                    {"role": "system", "content": GLOSSARY_SYSTEM},
+                    {"role": "user", "content": GLOSSARY_USER_TMPL.format(chunk=chunk)},
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            log.warning("glossary chunk %d/%d failed (%s); continuing", i, len(chunks), e)
+            continue
         chunk_map = _parse_json_loose(content)
         for k, v in chunk_map.items():
             merged.setdefault(k, v)
+        log.info("glossary chunk %d/%d :: +%d terms (total=%d)", i, len(chunks), len(chunk_map), len(merged))
     return Glossary(mapping=merged)

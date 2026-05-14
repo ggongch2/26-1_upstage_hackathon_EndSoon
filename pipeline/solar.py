@@ -13,7 +13,7 @@ class SolarClient:
         api_key: str,
         base_url: str = "https://api.upstage.ai/v1",
         model: str = "solar-pro2",
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -57,4 +57,8 @@ def from_env() -> SolarClient:
         raise RuntimeError("UPSTAGE_API_KEY not set")
     base_url = os.environ.get("UPSTAGE_BASE_URL", "https://api.upstage.ai/v1")
     model = os.environ.get("SOLAR_MODEL", "solar-pro2")
-    return SolarClient(api_key=api_key, base_url=base_url, model=model)
+    try:
+        timeout = float(os.environ.get("SOLAR_TIMEOUT", "300"))
+    except ValueError:
+        timeout = 300.0
+    return SolarClient(api_key=api_key, base_url=base_url, model=model, timeout=timeout)

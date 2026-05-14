@@ -10,7 +10,8 @@
       "Bash(python -c \"import xml.etree.ElementTree as ET; ET.parse\\('pipeline/assets/MML2OMML.XSL'\\); print\\('XSL valid XML'\\)\")",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(python -m py_compile pipeline/solar.py pipeline/glossary.py)"
     ]
   }
 }
