@@ -14,7 +14,12 @@ from fastapi.staticfiles import StaticFiles
 
 from pipeline import docx_builder, glossary as glossary_mod, mocks, parser as parser_mod, solar as solar_mod
 from pipeline.jobs import REGISTRY
+from pipeline.pdf_crop import PdfCropper
 from pipeline.translator import translate_elements
+
+# Element categories where we capture an image crop from the original PDF
+# instead of trusting Document Parse's text/HTML extraction.
+CAPTURE_AS_IMAGE = {"table", "equation"}
 
 
 def _truthy(val: str | None) -> bool:
@@ -66,6 +71,28 @@ def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | Non
         log.info("job %s :: Document Parse start (mock=%s)", job_id, mock_mode)
         parsed = parser.parse(work_path)
         log.info("job %s :: %d elements parsed", job_id, len(parsed.elements))
+
+        # Crop original PDF regions for table/equation elements so the docx
+        # gets pixel-perfect images instead of OCR-mangled text. Skipped in
+        # mock mode (no real PDF to crop from) and on PDFs that pymupdf can't open.
+        if not mock_mode and work_path.suffix.lower() == ".pdf":
+            try:
+                cropped = 0
+                with PdfCropper(work_path) as cropper:
+                    for elem in parsed.elements:
+                        if elem.category.lower() not in CAPTURE_AS_IMAGE:
+                            continue
+                        if elem.base64:
+                            continue
+                        if not elem.coordinates:
+                            continue
+                        b64 = cropper.crop_to_base64(elem.page, elem.coordinates)
+                        if b64:
+                            elem.base64 = b64
+                            cropped += 1
+                log.info("job %s :: cropped %d table/equation regions from PDF", job_id, cropped)
+            except Exception:
+                log.exception("job %s :: PDF cropping failed (non-fatal); falling back to text", job_id)
 
         # Dump raw response for debugging — category counts + first raw element of each
         # category with long string fields truncated. This is the file to share when

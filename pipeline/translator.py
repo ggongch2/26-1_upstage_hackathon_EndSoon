@@ -323,6 +323,10 @@ def _translate_one(
             translated = stripped
         return TranslatedElement(elem, translated, elem.html)
     if cat in TABLE_CATEGORIES:
+        # If a PDF-cropped image is attached, skip translation entirely — the
+        # docx will render the table as a faithful image of the original.
+        if elem.base64:
+            return TranslatedElement(elem, elem.text, elem.html)
         try:
             new_html = _translate_table_html(solar, glossary, elem.html)
         except Exception:

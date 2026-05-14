@@ -221,6 +221,16 @@ def build_docx(
             # in a separate 'caption' category element. Skip adding it here.
             continue
 
+        # Tables/equations with a PDF-cropped image attached → render as image for
+        # pixel-perfect fidelity. Without an image, fall through to the existing
+        # HTML-table / OMML-equation rendering paths below.
+        if cat in TABLE_CATEGORIES and elem.base64:
+            if _add_image_from_base64(doc, elem.base64, max_width_inches=6.0):
+                continue
+        if cat == "equation" and elem.base64:
+            if _add_image_from_base64(doc, elem.base64, max_width_inches=5.5):
+                continue
+
         if cat == "caption":
             text = tr.translated_text.strip() or elem.text.strip()
             if text:

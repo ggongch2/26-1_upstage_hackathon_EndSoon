@@ -26,7 +26,8 @@
       "Bash(python -m py_compile pipeline/translator.py pipeline/docx_builder.py)",
       "Bash(git fetch *)",
       "Bash(python _test_garbage.py)",
-      "Bash(python _test_unicode.py)"
+      "Bash(python _test_unicode.py)",
+      "Bash(python -m py_compile pipeline/pdf_crop.py pipeline/translator.py pipeline/docx_builder.py main.py)"
     ]
   }
 }
