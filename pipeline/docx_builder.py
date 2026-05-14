@@ -30,9 +30,9 @@ IMAGE_CATEGORIES = {"figure", "chart"}
 TABLE_CATEGORIES = {"table"}
 
 
-def _add_image_from_base64(doc: Document, b64: str, max_width_inches: float = 5.5) -> None:
+def _add_image_from_base64(doc: Document, b64: str, max_width_inches: float = 5.5) -> bool:
     if not b64:
-        return
+        return False
     data = b64
     if "," in data:
         data = data.split(",", 1)[1]
@@ -40,12 +40,14 @@ def _add_image_from_base64(doc: Document, b64: str, max_width_inches: float = 5.
         raw = base64.b64decode(data)
     except Exception:
         log.warning("invalid base64 image; skipping")
-        return
+        return False
     bio = BytesIO(raw)
     try:
         doc.add_picture(bio, width=Inches(max_width_inches))
+        return True
     except Exception:
         log.exception("add_picture failed; skipping image")
+        return False
 
 
 def _add_html_table(doc: Document, html: str) -> None:
@@ -138,7 +140,13 @@ def build_docx(
 
         cat = elem.category.lower()
         if cat in IMAGE_CATEGORIES:
-            _add_image_from_base64(doc, elem.base64 or "")
+            placed = bool(elem.base64) and _add_image_from_base64(doc, elem.base64 or "")
+            if not placed and elem.markdown.strip():
+                # No image returned by Document Parse — fall back to chart_recognition markdown
+                # so axis labels, legends, and table data aren't lost.
+                p = doc.add_paragraph()
+                p.add_run("[차트 데이터]\n").bold = True
+                p.add_run(elem.markdown.strip())
             if tr.translated_text.strip():
                 cap = doc.add_paragraph(tr.translated_text.strip())
                 cap.italic = True

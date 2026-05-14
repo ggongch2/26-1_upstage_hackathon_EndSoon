@@ -67,6 +67,33 @@ def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | Non
         parsed = parser.parse(work_path)
         log.info("job %s :: %d elements parsed", job_id, len(parsed.elements))
 
+        # Dump raw response for debugging — category counts, sample elements per category.
+        try:
+            import json
+            from collections import Counter
+            cats = Counter(e.category for e in parsed.elements)
+            samples: dict[str, list] = {}
+            for e in parsed.elements:
+                samples.setdefault(e.category, [])
+                if len(samples[e.category]) < 3:
+                    samples[e.category].append({
+                        "id": e.id, "page": e.page,
+                        "text": (e.text or "")[:300],
+                        "html": (e.html or "")[:300],
+                        "has_base64": bool(e.base64),
+                    })
+            debug_path = OUTPUT_DIR / f"{job_id}_raw.json"
+            debug_path.write_text(
+                json.dumps(
+                    {"category_counts": dict(cats), "samples_per_category": samples},
+                    ensure_ascii=False, indent=2,
+                ),
+                encoding="utf-8",
+            )
+            log.info("job %s :: raw debug dump → %s", job_id, debug_path)
+        except Exception:
+            log.exception("raw dump failed (non-fatal)")
+
         REGISTRY.set_stage(
             job_id, "glossary", total=0, message=f"{len(parsed.elements)}개 요소에서 용어집 추출"
         )

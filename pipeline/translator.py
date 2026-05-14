@@ -63,14 +63,43 @@ def _user_prompt(glossary: Glossary, payload: str) -> list[dict[str, str]]:
     ]
 
 
+_LATEX_PATTERNS = [
+    (re.compile(r"\$\$[^$]+?\$\$", re.DOTALL), "display_dollar"),
+    (re.compile(r"\\\[[\s\S]+?\\\]"), "display_bracket"),
+    (re.compile(r"\$[^$\n]+?\$"), "inline_dollar"),
+    (re.compile(r"\\\([\s\S]+?\\\)"), "inline_paren"),
+]
+
+
+def _protect_latex(text: str) -> tuple[str, list[str]]:
+    """Replace LaTeX runs with opaque placeholders so the LLM cannot mangle them."""
+    saved: list[str] = []
+
+    def _sub(m: re.Match) -> str:
+        saved.append(m.group(0))
+        return f"⟦M{len(saved)-1}⟧"
+
+    for pattern, _name in _LATEX_PATTERNS:
+        text = pattern.sub(_sub, text)
+    return text, saved
+
+
+def _restore_latex(text: str, saved: list[str]) -> str:
+    for i, original in enumerate(saved):
+        text = text.replace(f"⟦M{i}⟧", original)
+    return text
+
+
 def _translate_text(solar: SolarClient, glossary: Glossary, text: str) -> str:
     text = text.strip()
     if not text:
         return ""
-    out = solar.chat(messages=_user_prompt(glossary, text), temperature=0.2)
+    protected, saved = _protect_latex(text)
+    out = solar.chat(messages=_user_prompt(glossary, protected), temperature=0.2)
     out = out.strip()
     out = re.sub(r"^---\s*", "", out)
     out = re.sub(r"\s*---$", "", out)
+    out = _restore_latex(out, saved)
     return glossary.apply(out)
 
 
