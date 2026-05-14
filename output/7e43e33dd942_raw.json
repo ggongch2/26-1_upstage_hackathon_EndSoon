@@ -1,0 +1,222 @@
+{
+  "category_counts": {
+    "paragraph": 118,
+    "table": 5,
+    "caption": 9,
+    "chart": 9,
+    "header": 16,
+    "heading1": 16,
+    "equation": 22,
+    "figure": 3,
+    "list": 25
+  },
+  "samples_per_category": {
+    "paragraph": [
+      {
+        "id": 0,
+        "page": 1,
+        "text": "Chapter 4",
+        "html": "<p id='0' data-category='paragraph' style='font-size:20px'>Chapter 4</p>",
+        "has_base64": false
+      },
+      {
+        "id": 1,
+        "page": 1,
+        "text": "Linear Equations and Inverse\nMatrices",
+        "html": "<p id='1' data-category='paragraph' style='font-size:22px'>Linear Equations and Inverse<br>Matrices</p>",
+        "has_base64": false
+      },
+      {
+        "id": 2,
+        "page": 1,
+        "text": "4. 1 Two Pictures of Linear Equations",
+        "html": "<p id='2' data-category='paragraph' style='font-size:20px'>4. 1 Two Pictures of Linear Equations</p>",
+        "has_base64": false
+      }
+    ],
+    "table": [
+      {
+        "id": 4,
+        "page": 1,
+        "text": "| Two equations | x - 2y 1 |\n| --- | --- |\n| Two unknowns | 2x + 7 |\n",
+        "html": "<table id='4' style='font-size:14px'><thead></thead><tbody><tr><td>Two equations</td><td>x - 2y 1</td></tr><tr><td>Two unknowns</td><td>2x + 7</td></tr></tbody></table>",
+        "has_base64": true
+      },
+      {
+        "id": 39,
+        "page": 3,
+        "text": "| Matrix multiplies vector | 1 -2 x | 17 | | 2 1 y = |\n| --- | --- |\n",
+        "html": "<table id='39' style='font-size:20px'><thead></thead><tbody><tr><td>Matrix multiplies vector</td><td>1 -2 x | 17 | | 2 1 y =</td></tr></tbody></table>",
+        "has_base64": true
+      },
+      {
+        "id": 64,
+        "page": 5,
+        "text": "| Linear combination 2v + 3w | 3 - 1 3 2 + 3 = 1 1 5 |\n| --- | --- |\n",
+        "html": "<table id='64' style='font-size:14px'><thead></thead><tbody><tr><td>Linear combination 2v + 3w</td><td>3 - 1 3 2 + 3 = 1 1 5</td></tr></tbody></table>",
+        "has_base64": true
+      }
+    ],
+    "caption": [
+      {
+        "id": 5,
+        "page": 1,
+        "text": "(1)",
+        "html": "<br><caption id='5' style='font-size:18px'>(1)</caption>",
+        "has_base64": false
+      },
+      {
+        "id": 9,
+        "page": 1,
+        "text": "Figure 4.1: Row picture : The point (3, 1) where the two lines meet is the solution.",
+        "html": "<caption id='9' style='font-size:16px'>Figure 4.1: Row picture : The point (3, 1) where the two lines meet is the solution.</caption>",
+        "has_base64": false
+      },
+      {
+        "id": 24,
+        "page": 2,
+        "text": "Figure 4.2: Column picture : A combination 3 (column 1 ) + 1 (column 2) gives the vector b.",
+        "html": "<caption id='24' style='font-size:14px'>Figure 4.2: Column picture : A combination 3 (column 1 ) + 1 (column 2) gives the vector b.</caption>",
+        "has_base64": false
+      }
+    ],
+    "chart": [
+      {
+        "id": 8,
+        "page": 1,
+        "text": "![image](/image/placeholder)\n- Chart Type: line\n|  | x - 2y | x - 3 | x + 4 |\n| --- | --- | --- | --- |\n| item_01 | 1 | 3.1 | 7 |\n",
+        "html": "<figure id='8' data-category='chart'><img data-coord=\"top-left:(203,880); bottom-right:(609,1054)\" /><figcaption><p>Chart Type: line</p></figcaption><table><thead><tr><td></td><td>x - 2y</td><td>x - 3</td><td>x + 4</td></tr></thead><tbody><tr><td>item_01</td><td>1</td><td>3.1</td><td>7</td></tr></tb",
+        "has_base64": true
+      },
+      {
+        "id": 22,
+        "page": 2,
+        "text": "![image](/image/placeholder)\n- Chart Type: line\n|  | -2 | -1 | 0 | 1 | 2 | 3 |\n| --- | --- | --- | --- | --- | --- | --- |\n| item_01 | 1 | -1 | 0 | 1 | 2 | 3 |\n",
+        "html": "<br><figure id='22' data-category='chart'><img data-coord=\"top-left:(17,677); bottom-right:(346,955)\" /><figcaption><p>Chart Type: line</p></figcaption><table><thead><tr><td></td><td>-2</td><td>-1</td><td>0</td><td>1</td><td>2</td><td>3</td></tr></thead><tbody><tr><td>item_01</td><td>1</td><td>-1</t",
+        "has_base64": true
+      },
+      {
+        "id": 23,
+        "page": 2,
+        "text": "![image](/image/placeholder)\n- Chart Type: line\n|  | -2 | -1 | 0 | 1 | 2 | 3 |\n| --- | --- | --- | --- | --- | --- | --- |\n| item_01 | 1 | 2 | 6 | 7 | 7 | 3 |\n",
+        "html": "<br><figure id='23' data-category='chart'><img data-coord=\"top-left:(409,642); bottom-right:(778,956)\" /><figcaption><p>Chart Type: line</p></figcaption><table><thead><tr><td></td><td>-2</td><td>-1</td><td>0</td><td>1</td><td>2</td><td>3</td></tr></thead><tbody><tr><td>item_01</td><td>1</td><td>2</t",
+        "has_base64": true
+      }
+    ],
+    "header": [
+      {
+        "id": 10,
+        "page": 2,
+        "text": "198",
+        "html": "<br><header id='10' style='font-size:18px'>198</header>",
+        "has_base64": false
+      },
+      {
+        "id": 27,
+        "page": 3,
+        "text": "4.1. Two Pictures of Linear Equations",
+        "html": "<br><header id='27' style='font-size:14px'>4.1. Two Pictures of Linear Equations</header>",
+        "has_base64": false
+      },
+      {
+        "id": 28,
+        "page": 3,
+        "text": "199",
+        "html": "<br><header id='28' style='font-size:18px'>199</header>",
+        "has_base64": false
+      }
+    ],
+    "heading1": [
+      {
+        "id": 12,
+        "page": 2,
+        "text": "The second line in this \"row picture\" comes from the second equation 2x+y = 7. You\ncan't miss the intersection point where the two lines meet. The point x = 3,y = 1 lies on\nboth lines. It solves both equations at once. This is the solution to our two equations.",
+        "html": "<h1 id='12' style='font-size:14px'>The second line in this \"row picture\" comes from the second equation 2x+y = 7. You<br>can't miss the intersection point where the two lines meet. The point x = 3,y = 1 lies on<br>both lines. It solves both equations at once. This is the solution to our two equation",
+        "has_base64": false
+      },
+      {
+        "id": 16,
+        "page": 2,
+        "text": "Combination equals b",
+        "html": "<br><h1 id='16' style='font-size:16px'>Combination equals b</h1>",
+        "has_base64": false
+      },
+      {
+        "id": 37,
+        "page": 3,
+        "text": "1 -2\nCoefficient matrix A = 1 ·\n2 1",
+        "html": "<h1 id='37' style='font-size:14px'>1 -2<br>Coefficient matrix A = 1 ·<br>2 1</h1>",
+        "has_base64": false
+      }
+    ],
+    "equation": [
+      {
+        "id": 17,
+        "page": 2,
+        "text": "",
+        "html": "<br><p id='17' data-category='equation'>$$x\\ {\\left[\\begin{array}{l}{1}\\\\ {2}\\end{array}\\right]}+y\\ {\\left[\\begin{array}{l}{-2}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{1}\\\\ {7}\\end{array}\\right]}=b.$$</p>",
+        "has_base64": false
+      },
+      {
+        "id": 59,
+        "page": 4,
+        "text": "",
+        "html": "<br><p id='59' data-category='equation'>$$v+w={\\left[\\begin{array}{l}{3}\\\\ {1}\\end{array}\\right]}+{\\left[\\begin{array}{l}{-1}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{2}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{{}\\\\ {2}}\\end{array}\\right]}\\qquad{\\begin{array}{l}{{\\displaystyle w_{\\in",
+        "has_base64": false
+      },
+      {
+        "id": 60,
+        "page": 4,
+        "text": "",
+        "html": "<p id='60' data-category='equation'>$${\\mathsf{F i g u r e}}\\operatorname{t.5}\\operatorname{The}\\operatorname{sumof}v=(3,1)\\operatorname{and}w=(-1,1)\\operatorname{is}v+w=(2,2).{\\mathsf{T h i s~a l s o~}}w+v.$$</p>",
+        "has_base64": false
+      }
+    ],
+    "figure": [
+      {
+        "id": 48,
+        "page": 4,
+        "text": "![image](/image/placeholder)\n",
+        "html": "<br><figure id='48'><img alt=\"\" data-coord=\"top-left:(78,209); bottom-right:(737,384)\" /></figure>",
+        "has_base64": true
+      },
+      {
+        "id": 52,
+        "page": 4,
+        "text": "![image](/image/placeholder)\n",
+        "html": "<br><figure id='52' data-category='chart'><img alt=\"\" data-coord=\"top-left:(29,567); bottom-right:(751,738)\" /></figure>",
+        "has_base64": true
+      },
+      {
+        "id": 55,
+        "page": 4,
+        "text": "![image](/image/placeholder)\nv + w\n3 - 1 | 22  w v\nv + w = + =\n1 1\n-1 1 2 3",
+        "html": "<figure id='55'><img style='font-size:18px' alt=\"v + w\n3 - 1 | 22  w v\nv + w = + =\n1 1\n-1 1 2 3\" data-coord=\"top-left:(101,907); bottom-right:(712,1024)\" /></figure>",
+        "has_base64": true
+      }
+    ],
+    "list": [
+      {
+        "id": 158,
+        "page": 10,
+        "text": "3 If equation 1 is added to equation 2, which of these are changed: the planes in the\nrow picture, the vectors in the column picture, the coefficient matrix, the solution?\nThe new equations in Problem 1 would be x = 2, x + y = 5, z = 4.",
+        "html": "<p id='158' data-category='list' style='font-size:16px'>3 If equation 1 is added to equation 2, which of these are changed: the planes in the<br>row picture, the vectors in the column picture, the coefficient matrix, the solution?<br>The new equations in Problem 1 would be x = 2, x + y = 5, z = 4.</",
+        "has_base64": false
+      },
+      {
+        "id": 160,
+        "page": 10,
+        "text": "",
+        "html": "<br><p id='160' data-category='list'></p>",
+        "has_base64": false
+      },
+      {
+        "id": 161,
+        "page": 10,
+        "text": "5 The first of these equations plus the second equals the third:",
+        "html": "<p id='161' data-category='list' style='font-size:18px'>5 The first of these equations plus the second equals the third:</p>",
+        "has_base64": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,543 @@
+{
+  "category_counts": {
+    "paragraph": 121,
+    "table": 6,
+    "caption": 9,
+    "chart": 9,
+    "header": 15,
+    "heading1": 13,
+    "equation": 22,
+    "figure": 3,
+    "list": 25
+  },
+  "raw_samples_per_category": {
+    "paragraph": [
+      {
+        "category": "paragraph",
+        "content": {
+          "html": "<p id='0' data-category='paragraph' style='font-size:20px'>Chapter 4</p>",
+          "markdown": "Chapter 4",
+          "text": "Chapter 4"
+        },
+        "coordinates": [
+          {
+            "x": 0.0242,
+            "y": 0.1679
+          },
+          {
+            "x": 0.2615,
+            "y": 0.1679
+          },
+          {
+            "x": 0.2615,
+            "y": 0.2082
+          },
+          {
+            "x": 0.0242,
+            "y": 0.2082
+          }
+        ],
+        "id": 0,
+        "page": 1
+      },
+      {
+        "category": "paragraph",
+        "content": {
+          "html": "<p id='1' data-category='paragraph' style='font-size:22px'>Linear Equations and Inverse<br>Matrices</p>",
+          "markdown": "Linear Equations and Inverse\nMatrices",
+          "text": "Linear Equations and Inverse\nMatrices"
+        },
+        "coordinates": [
+          {
+            "x": 0.0214,
+            "y": 0.248
+          },
+          {
+            "x": 0.8364,
+            "y": 0.248
+          },
+          {
+            "x": 0.8364,
+            "y": 0.3423
+          },
+          {
+            "x": 0.0214,
+            "y": 0.3423
+          }
+        ],
+        "id": 1,
+        "page": 1
+      }
+    ],
+    "table": [
+      {
+        "base64_encoding": "/9j/2wCEAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgoBAgICAgICBQMDBQoHBgcKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCv/AABEIADQBfQMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeI…(+10744 chars)",
+        "category": "table",
+        "content": {
+          "html": "<table id='4' style='font-size:14px'><thead></thead><tbody><tr><td>Two equations</td><td>x - 2y 1</td></tr><tr><td>Two unknowns</td><td>2x + 7</td></tr></tbody></table>",
+          "markdown": "| Two equations | x - 2y 1 |\n| --- | --- |\n| Two unknowns | 2x + 7 |\n",
+          "text": "| Two equations | x - 2y 1 |\n| --- | --- |\n| Two unknowns | 2x + 7 |\n"
+        },
+        "coordinates": [
+          {
+            "x": 0.2303,
+            "y": 0.5542
+          },
+          {
+            "x": 0.6965,
+            "y": 0.5542
+          },
+          {
+            "x": 0.6965,
+            "y": 0.5973
+          },
+          {
+            "x": 0.2303,
+            "y": 0.5973
+          }
+        ],
+        "id": 4,
+        "page": 1
+      },
+      {
+        "base64_encoding": "/9j/2wCEAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgoBAgICAgICBQMDBQoHBgcKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCv/AABEIAEkCAAMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeI…(+13668 chars)",
+        "category": "table",
+        "content": {
+          "html": "<table id='39' style='font-size:20px'><thead></thead><tbody><tr><td>Matrix multiplies vector</td><td>1 -2 x | 17 | | 2 1 y =</td></tr></tbody></table>",
+          "markdown": "| Matrix multiplies vector | 1 -2 x | 17 | | 2 1 y = |\n| --- | --- |\n",
+          "text": "| Matrix multiplies vector | 1 -2 x | 17 | | 2 1 y = |\n| --- | --- |\n"
+        },
+        "coordinates": [
+          {
+            "x": 0.1687,
+            "y": 0.7558
+          },
+          {
+            "x": 0.7969,
+            "y": 0.7558
+          },
+          {
+            "x": 0.7969,
+            "y": 0.8185
+          },
+          {
+            "x": 0.1687,
+            "y": 0.8185
+          }
+        ],
+        "id": 39,
+        "page": 3
+      }
+    ],
+    "caption": [
+      {
+        "category": "caption",
+        "content": {
+          "html": "<br><caption id='5' style='font-size:18px'>(1)</caption>",
+          "markdown": "(1)",
+          "text": "(1)"
+        },
+        "coordinates": [
+          {
+            "x": 0.9119,
+            "y": 0.5659
+          },
+          {
+            "x": 0.9476,
+            "y": 0.5659
+          },
+          {
+            "x": 0.9476,
+            "y": 0.5861
+          },
+          {
+            "x": 0.9119,
+            "y": 0.5861
+          }
+        ],
+        "id": 5,
+        "page": 1
+      },
+      {
+        "category": "caption",
+        "content": {
+          "html": "<caption id='9' style='font-size:16px'>Figure 4.1: Row picture : The point (3, 1) where the two lines meet is the solution.</caption>",
+          "markdown": "Figure 4.1: Row picture : The point (3, 1) where the two lines meet is the solution.",
+          "text": "Figure 4.1: Row picture : The point (3, 1) where the two lines meet is the solution."
+        },
+        "coordinates": [
+          {
+            "x": 0.0628,
+            "y": 0.8919
+          },
+          {
+            "x": 0.9086,
+            "y": 0.8919
+          },
+          {
+            "x": 0.9086,
+            "y": 0.9145
+          },
+          {
+            "x": 0.0628,
+            "y": 0.9145
+          }
+        ],
+        "id": 9,
+        "page": 1
+      }
+    ],
+    "chart": [
+      {
+        "base64_encoding": "/9j/2wCEAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgoBAgICAgICBQMDBQoHBgcKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCv/AABEIAK4BlgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeI…(+17208 chars)",
+        "category": "chart",
+        "content": {
+          "html": "<figure id='8' data-category='chart'><img data-coord=\"top-left:(203,880); bottom-right:(609,1054)\" /><figcaption><p>Chart Type: line</p></figcaption><table><thead><tr><td></td><td>x - 2y</td><td>x - 3</td><td>x + 4</td></tr></thead><tbody><tr><td>item_01</td><td>1</td><td>3.1</td><td>7</td></tr></tbody></table></figure>",
+          "markdown": "![image](/image/placeholder)\n- Chart Type: line\n|  | x - 2y | x - 3 | x + 4 |\n| --- | --- | --- | --- |\n| item_01 | 1 | 3.1 | 7 |\n",
+          "text": "![image](/image/placeholder)\n- Chart Type: line\n|  | x - 2y | x - 3 | x + 4 |\n| --- | --- | --- | --- |\n| item_01 | 1 | 3.1 | 7 |\n"
+        },
+        "coordinates": [
+          {
+            "x": 0.2489,
+            "y": 0.731
+          },
+          {
+            "x": 0.7446,
+            "y": 0.731
+          },
+          {
+            "x": 0.7446,
+            "y": 0.8757
+          },
+          {
+            "x": 0.2489,
+            "y": 0.8757
+          }
+        ],
+        "id": 8,
+        "page": 1
+      },
+      {
+        "base64_encoding": "/9j/2wCEAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgoBAgICAgICBQMDBQoHBgcKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCv/AABEIARYBSQMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeI…(+28296 chars)",
+        "category": "chart",
+        "content": {
+          "html": "<br><figure id='22' data-category='chart'><img data-coord=\"top-left:(17,677); bottom-right:(346,955)\" /><figcaption><p>Chart Type: line</p></figcaption><table><thead><tr><td></td><td>-2</td><td>-1</td><td>0</td><td>1</td><td>2</td><td>3</td></tr></thead><tbody><tr><td>item_01</td><td>1</td><td>-1</td><td>0</td><td>1</td><td>2</td><td>3</td></tr></tbody></table></figure>",
+          "markdown": "![image](/image/placeholder)\n- Chart Type: line\n|  | -2 | -1 | 0 | 1 | 2 | 3 |\n| --- | --- | --- | --- | --- | --- | --- |\n| item_01 | 1 | -1 | 0 | 1 | 2 | 3 |\n",
+          "text": "![image](/image/placeholder)\n- Chart Type: line\n|  | -2 | -1 | 0 | 1 | 2 | 3 |\n| --- | --- | --- | --- | --- | --- | --- |\n| item_01 | 1 | -1 | 0 | 1 | 2 | 3 |\n"
+        },
+        "coordinates": [
+          {
+            "x": 0.0209,
+            "y": 0.5624
+          },
+          {
+            "x": 0.4237,
+            "y": 0.5624
+          },
+          {
+            "x": 0.4237,
+            "y": 0.7936
+          },
+          {
+            "x": 0.0209,
+            "y": 0.7936
+          }
+        ],
+        "id": 22,
+        "page": 2
+      }
+    ],
+    "header": [
+      {
+        "category": "header",
+        "content": {
+          "html": "<br><header id='10' style='font-size:18px'>198</header>",
+          "markdown": "198",
+          "text": "198"
+        },
+        "coordinates": [
+          {
+            "x": 0.0259,
+            "y": 0.0061
+          },
+          {
+            "x": 0.08,
+            "y": 0.0061
+          },
+          {
+            "x": 0.08,
+            "y": 0.0273
+          },
+          {
+            "x": 0.0259,
+            "y": 0.0273
+          }
+        ],
+        "id": 10,
+        "page": 2
+      },
+      {
+        "category": "header",
+        "content": {
+          "html": "<br><header id='28' style='font-size:18px'>199</header>",
+          "markdown": "199",
+          "text": "199"
+        },
+        "coordinates": [
+          {
+            "x": 0.8946,
+            "y": 0.0066
+          },
+          {
+            "x": 0.9471,
+            "y": 0.0066
+          },
+          {
+            "x": 0.9471,
+            "y": 0.0276
+          },
+          {
+            "x": 0.8946,
+            "y": 0.0276
+          }
+        ],
+        "id": 28,
+        "page": 3
+      }
+    ],
+    "heading1": [
+      {
+        "category": "heading1",
+        "content": {
+          "html": "<h1 id='12' style='font-size:14px'>The second line in this \"row picture\" comes from the second equation 2x+y = 7. You<br>can't miss the intersection point where the two lines meet. The point x = 3,y = 1 lies on<br>both lines. It solves both equations at once. This is the solution to our two equations.</h1>",
+          "markdown": "# The second line in this \"row picture\" comes from the second equation 2x+y = 7. You\ncan't miss the intersection point where the two lines meet. The point x = 3,y = 1 lies on\nboth lines. It solves both equations at once. This is the solution to our two equations.",
+          "text": "The second line in this \"row picture\" comes from the second equation 2x+y = 7. You\ncan't miss the intersection point where the two lines meet. The point x = 3,y = 1 lies on\nboth lines. It solves both equations at once. This is the solution to our two equations."
+        },
+        "coordinates": [
+          {
+            "x": 0.0235,
+            "y": 0.0528
+          },
+          {
+            "x": 0.9509,
+            "y": 0.0528
+          },
+          {
+            "x": 0.9509,
+            "y": 0.116
+          },
+          {
+            "x": 0.0235,
+            "y": 0.116
+          }
+        ],
+        "id": 12,
+        "page": 2
+      },
+      {
+        "category": "heading1",
+        "content": {
+          "html": "<br><h1 id='16' style='font-size:16px'>Combination equals b</h1>",
+          "markdown": "# Combination equals b",
+          "text": "Combination equals b"
+        },
+        "coordinates": [
+          {
+            "x": 0.0271,
+            "y": 0.3126
+          },
+          {
+            "x": 0.2748,
+            "y": 0.3126
+          },
+          {
+            "x": 0.2748,
+            "y": 0.3352
+          },
+          {
+            "x": 0.0271,
+            "y": 0.3352
+          }
+        ],
+        "id": 16,
+        "page": 2
+      }
+    ],
+    "equation": [
+      {
+        "category": "equation",
+        "content": {
+          "html": "<br><p id='17' data-category='equation'>$$x\\ {\\left[\\begin{array}{l}{1}\\\\ {2}\\end{array}\\right]}+y\\ {\\left[\\begin{array}{l}{-2}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{1}\\\\ {7}\\end{array}\\right]}=b.$$</p>",
+          "markdown": "$$x\\ {\\left[\\begin{array}{l}{1}\\\\ {2}\\end{array}\\right]}+y\\ {\\left[\\begin{array}{l}{-2}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{1}\\\\ {7}\\end{array}\\right]}=b.$$",
+          "text": ""
+        },
+        "coordinates": [
+          {
+            "x": 0.367,
+            "y": 0.3002
+          },
+          {
+            "x": 0.7554,
+            "y": 0.3002
+          },
+          {
+            "x": 0.7554,
+            "y": 0.3485
+          },
+          {
+            "x": 0.367,
+            "y": 0.3485
+          }
+        ],
+        "id": 17,
+        "page": 2
+      },
+      {
+        "category": "equation",
+        "content": {
+          "html": "<br><p id='59' data-category='equation'>$$v+w={\\left[\\begin{array}{l}{3}\\\\ {1}\\end{array}\\right]}+{\\left[\\begin{array}{l}{-1}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{2}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{{}\\\\ {2}}\\end{array}\\right]}\\qquad{\\begin{array}{l}{{\\displaystyle w_{\\infty}\\mp\\displaystyle\\sum_{\\scriptstyle A\\leq\\leq\\gamma}\\!\\!\\!\\!\\overbrace{\\displaystyle+}^{\\displays…(+100 chars)",
+          "markdown": "$$v+w={\\left[\\begin{array}{l}{3}\\\\ {1}\\end{array}\\right]}+{\\left[\\begin{array}{l}{-1}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{2}\\\\ {1}\\end{array}\\right]}={\\left[\\begin{array}{l}{{}\\\\ {2}}\\end{array}\\right]}\\qquad{\\begin{array}{l}{{\\displaystyle w_{\\infty}\\mp\\displaystyle\\sum_{\\scriptstyle A\\leq\\leq\\gamma}\\!\\!\\!\\!\\overbrace{\\displaystyle+}^{\\displaystyle v}\\!\\!\\!\\sqrt^{\\star}\\!\\!\\!\\!\\psi}}…(+56 chars)",
+          "text": ""
+        },
+        "coordinates": [
+          {
+            "x": 0.1233,
+            "y": 0.7687
+          },
+          {
+            "x": 0.8701,
+            "y": 0.7687
+          },
+          {
+            "x": 0.8701,
+            "y": 0.8678
+          },
+          {
+            "x": 0.1233,
+            "y": 0.8678
+          }
+        ],
+        "id": 59,
+        "page": 4
+      }
+    ],
+    "figure": [
+      {
+        "base64_encoding": "/9j/2wCEAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgoBAgICAgICBQMDBQoHBgcKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCv/AABEIAK8CkwMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeI…(+21808 chars)",
+        "category": "figure",
+        "content": {
+          "html": "<br><figure id='48'><img alt=\"\" data-coord=\"top-left:(78,209); bottom-right:(737,384)\" /></figure>",
+          "markdown": "![image](/image/placeholder)\n",
+          "text": "![image](/image/placeholder)\n"
+        },
+        "coordinates": [
+          {
+            "x": 0.0962,
+            "y": 0.1771
+          },
+          {
+            "x": 0.901,
+            "y": 0.1771
+          },
+          {
+            "x": 0.901,
+            "y": 0.3259
+          },
+          {
+            "x": 0.0962,
+            "y": 0.3259
+          }
+        ],
+        "id": 48,
+        "page": 4
+      },
+      {
+        "base64_encoding": "/9j/2wCEAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgoBAgICAgICBQMDBQoHBgcKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCv/AABEIAKsC0gMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeI…(+26084 chars)",
+        "category": "figure",
+        "content": {
+          "html": "<br><figure id='52' data-category='chart'><img alt=\"\" data-coord=\"top-left:(29,567); bottom-right:(751,738)\" /></figure>",
+          "markdown": "![image](/image/placeholder)\n",
+          "text": "![image](/image/placeholder)\n"
+        },
+        "coordinates": [
+          {
+            "x": 0.0359,
+            "y": 0.4806
+          },
+          {
+            "x": 0.9178,
+            "y": 0.4806
+          },
+          {
+            "x": 0.9178,
+            "y": 0.6255
+          },
+          {
+            "x": 0.0359,
+            "y": 0.6255
+          }
+        ],
+        "id": 52,
+        "page": 4
+      }
+    ],
+    "list": [
+      {
+        "category": "list",
+        "content": {
+          "html": "<br><p id='159' data-category='list'></p>",
+          "markdown": "- \n",
+          "text": ""
+        },
+        "coordinates": [
+          {
+            "x": 0.0236,
+            "y": 0.5135
+          },
+          {
+            "x": 0.9507,
+            "y": 0.5135
+          },
+          {
+            "x": 0.9507,
+            "y": 0.5766
+          },
+          {
+            "x": 0.0236,
+            "y": 0.5766
+          }
+        ],
+        "id": 159,
+        "page": 10
+      },
+      {
+        "category": "list",
+        "content": {
+          "html": "<p id='160' data-category='list' style='font-size:14px'>4 Find a point with z = 2 on the intersection line of the planes x + y + 3z = 6 and<br>x - y + z = 4. Find the point with Z = 0. Find a third point halfway between.</p>",
+          "markdown": "- 4 Find a point with z = 2 on the intersection line of the planes x + y + 3z = 6 and\n- x - y + z = 4. Find the point with Z = 0. Find a third point halfway between.\n",
+          "text": "4 Find a point with z = 2 on the intersection line of the planes x + y + 3z = 6 and\nx - y + z = 4. Find the point with Z = 0. Find a third point halfway between."
+        },
+        "coordinates": [
+          {
+            "x": 0.0243,
+            "y": 0.591
+          },
+          {
+            "x": 0.95,
+            "y": 0.591
+          },
+          {
+            "x": 0.95,
+            "y": 0.634
+          },
+          {
+            "x": 0.0243,
+            "y": 0.634
+          }
+        ],
+        "id": 160,
+        "page": 10
+      }
+    ]
+  }
+}
