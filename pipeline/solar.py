@@ -27,6 +27,7 @@ class SolarClient:
         temperature: float = 0.1,
         response_format: dict[str, Any] | None = None,
         max_tokens: int | None = None,
+        timeout: float | None = None,
     ) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = {
@@ -43,7 +44,7 @@ class SolarClient:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=timeout or self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             raise RuntimeError(f"Solar chat failed {resp.status_code}: {resp.text[:500]}")
