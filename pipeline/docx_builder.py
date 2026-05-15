@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import re
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +16,18 @@ from docx.shared import Inches, Pt
 
 from .translator import TranslatedElement
 
-KOREAN_FONT = "맑은 고딕"
+# Fonts are env-tunable so the output can be matched to whatever the source
+# textbook used. Defaults pick a Korean font that ships with Windows.
+#   DOCX_KOREAN_FONT  — applied to East-Asian runs (ascii/hAnsi/eastAsia/cs).
+#   DOCX_LATIN_FONT   — optional override for Latin runs only; if empty the
+#                       Korean font handles both (works fine for 맑은 고딕).
+#   DOCX_FONT_SIZE    — body font size in points (Word default is 11).
+KOREAN_FONT = os.environ.get("DOCX_KOREAN_FONT", "맑은 고딕")
+LATIN_FONT = os.environ.get("DOCX_LATIN_FONT", "").strip() or None
+try:
+    BODY_FONT_SIZE = float(os.environ.get("DOCX_FONT_SIZE", "11"))
+except ValueError:
+    BODY_FONT_SIZE = 11.0
 
 log = logging.getLogger(__name__)
 
@@ -175,33 +187,75 @@ def _add_text_with_inline_math(doc: Document, text: str, *, style: str | None = 
             p.add_run(part)
 
 
-def _apply_korean_font_to_style(style, font_name: str) -> None:
-    """Set ascii/hAnsi/eastAsia/cs fonts on a style so Korean text renders properly."""
+def _apply_korean_font_to_style(
+    style,
+    korean_font: str,
+    latin_font: str | None = None,
+    *,
+    size_pt: float | None = None,
+) -> None:
+    """Apply fonts + size to a style.
+
+    If ``latin_font`` is provided it goes on ascii/hAnsi/cs (Latin / Arabic /
+    complex-script slots) while ``korean_font`` only covers eastAsia.
+    Otherwise the Korean font is applied to all four slots so Word doesn't
+    fall back to its default Latin face for English runs.
+    """
     rpr = style.element.get_or_add_rPr()
     rfonts = rpr.find(qn("w:rFonts"))
     if rfonts is None:
         rfonts = OxmlElement("w:rFonts")
         rpr.append(rfonts)
-    for attr in ("ascii", "hAnsi", "eastAsia", "cs"):
-        rfonts.set(qn(f"w:{attr}"), font_name)
+    if latin_font:
+        rfonts.set(qn("w:ascii"), latin_font)
+        rfonts.set(qn("w:hAnsi"), latin_font)
+        rfonts.set(qn("w:cs"), latin_font)
+        rfonts.set(qn("w:eastAsia"), korean_font)
+    else:
+        for attr in ("ascii", "hAnsi", "eastAsia", "cs"):
+            rfonts.set(qn(f"w:{attr}"), korean_font)
+
+    if size_pt is not None:
+        sz = rpr.find(qn("w:sz"))
+        if sz is None:
+            sz = OxmlElement("w:sz")
+            rpr.append(sz)
+        # w:sz value is in half-points (Word convention).
+        sz.set(qn("w:val"), str(int(size_pt * 2)))
 
 
-def _configure_korean_fonts(doc: Document, font_name: str = KOREAN_FONT) -> None:
-    """Apply the Korean font to Normal + Heading styles so the whole document inherits it."""
-    style_names = ["Normal", "Title"] + [f"Heading {i}" for i in range(1, 10)] + [
-        "List Bullet",
-        "List Number",
-        "Caption",
-    ]
-    for name in style_names:
+def _configure_korean_fonts(
+    doc: Document,
+    korean_font: str = KOREAN_FONT,
+    latin_font: str | None = LATIN_FONT,
+    *,
+    body_size_pt: float = BODY_FONT_SIZE,
+) -> None:
+    """Apply fonts/size to Normal + Heading + List + Caption styles so the
+    whole document inherits them. Headings get a 1.0 multiplier — Word's
+    own heading style sizing relative to the base is left intact, we just
+    override the font face."""
+    body_styles = ["Normal", "List Bullet", "List Number", "Caption"]
+    heading_styles = ["Title"] + [f"Heading {i}" for i in range(1, 10)]
+    for name in body_styles:
         try:
             style = doc.styles[name]
         except KeyError:
             continue
         try:
-            _apply_korean_font_to_style(style, font_name)
+            _apply_korean_font_to_style(style, korean_font, latin_font, size_pt=body_size_pt)
         except Exception:
-            log.warning("could not set Korean font on style %s", name)
+            log.warning("could not set fonts on style %s", name)
+    for name in heading_styles:
+        try:
+            style = doc.styles[name]
+        except KeyError:
+            continue
+        try:
+            # Don't override heading size — Word's defaults are intentional.
+            _apply_korean_font_to_style(style, korean_font, latin_font)
+        except Exception:
+            log.warning("could not set fonts on style %s", name)
 
 
 def build_docx(
