@@ -3,7 +3,9 @@ __pycache__/
 *.pyc
 work/
 samples/
+output/
 .venv/
 venv/
 .idea/
 .vscode/
+.claude/settings.local.json
