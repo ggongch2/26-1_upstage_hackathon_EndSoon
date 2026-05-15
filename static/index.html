@@ -167,6 +167,64 @@
     border-color: rgba(255,118,118,0.3);
     color: var(--bad);
   }
+  .review-card { border-color: var(--accent); }
+  .review-card h3 { color: var(--accent-2); }
+  .review-card .hint {
+    color: var(--muted); font-size: 13px; margin: 0 0 12px;
+  }
+  .review-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    margin-bottom: 14px;
+  }
+  .review-table th, .review-table td {
+    text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .review-table th { color: var(--muted); font-weight: 500; }
+  .review-table input[type=text] {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .review-table input.en {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    color: var(--accent);
+  }
+  .review-table input:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .review-table button.del {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .review-table button.del:hover {
+    color: var(--bad); border-color: var(--bad);
+  }
+  .review-actions {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  button.secondary {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.secondary:hover { border-color: var(--accent); }
+  .review-counter { color: var(--muted); font-size: 12px; margin-left: auto; }
 </style>
 </head>
 <body>
@@ -187,6 +245,7 @@
     <div class="controls">
       <label>제목 <input type="text" id="title" placeholder="(파일명 그대로 사용)" /></label>
       <label><input type="checkbox" id="wantPdf" /> PDF로도 출력</label>
+      <label><input type="checkbox" id="interactive" checked /> 용어집 검토 후 번역 (2-Pass)</label>
       <button class="primary" id="go" disabled>번역 시작</button>
       <span class="meta" id="fileLabel"></span>
     </div>
@@ -195,9 +254,33 @@
       <div class="stage" data-k="upload"><span class="dot"></span><span>① 업로드</span></div>
       <div class="stage" data-k="parse"><span class="dot"></span><span>② Document Parse</span></div>
       <div class="stage" data-k="glossary"><span class="dot"></span><span>③ 용어집 추출</span></div>
-      <div class="stage" data-k="translate"><span class="dot"></span><span>④ 번역</span></div>
-      <div class="stage" data-k="docx"><span class="dot"></span><span>⑤ DOCX 조립</span></div>
-      <div class="stage" data-k="pdf"><span class="dot"></span><span>⑥ PDF 변환</span></div>
+      <div class="stage" data-k="awaiting_review"><span class="dot"></span><span>④ 용어집 검토</span></div>
+      <div class="stage" data-k="translate"><span class="dot"></span><span>⑤ 번역</span></div>
+      <div class="stage" data-k="docx"><span class="dot"></span><span>⑥ DOCX 조립</span></div>
+      <div class="stage" data-k="pdf"><span class="dot"></span><span>⑦ PDF 변환</span></div>
+    </div>
+
+    <div class="card review-card" id="reviewCard" style="display:none">
+      <h3>용어집 검토 (2-Pass)</h3>
+      <p class="hint">
+        번역 시작 전 용어를 수정·삭제하거나 새로 추가할 수 있습니다.
+        여기서 확정된 매핑은 전체 문서 번역에 일관되게 강제 적용됩니다.
+      </p>
+      <table class="review-table">
+        <thead>
+          <tr>
+            <th style="width:38%">English</th>
+            <th style="width:50%">Korean</th>
+            <th style="width:12%"></th>
+          </tr>
+        </thead>
+        <tbody id="reviewBody"></tbody>
+      </table>
+      <div class="review-actions">
+        <button type="button" class="secondary" id="addRow">+ 용어 추가</button>
+        <button type="button" class="primary" id="confirmGlossary">이대로 번역 시작</button>
+        <span class="review-counter" id="reviewCounter">0개 용어</span>
+      </div>
     </div>
 
     <div class="card" id="progressCard" style="display:none">
@@ -235,12 +318,18 @@ const fileLabel = document.getElementById('fileLabel');
 const goBtn = document.getElementById('go');
 const titleInput = document.getElementById('title');
 const wantPdf = document.getElementById('wantPdf');
+const interactiveCk = document.getElementById('interactive');
 const stages = document.getElementById('stages');
 const results = document.getElementById('results');
 const summary = document.getElementById('summary');
 const downloads = document.getElementById('downloads');
 const glossaryBody = document.getElementById('glossaryBody');
 const modeBadge = document.getElementById('modeBadge');
+const reviewCard = document.getElementById('reviewCard');
+const reviewBody = document.getElementById('reviewBody');
+const reviewCounter = document.getElementById('reviewCounter');
+const addRowBtn = document.getElementById('addRow');
+const confirmGlossaryBtn = document.getElementById('confirmGlossary');
 
 let chosen = null;
 
@@ -271,17 +360,20 @@ function handlePick(f) {
 function resetStages() {
   for (const el of stages.querySelectorAll('.stage')) el.classList.remove('active','done');
   results.classList.remove('visible');
+  reviewCard.style.display = 'none';
+  reviewBody.innerHTML = '';
   progressFill.style.width = '0%';
   progressCount.textContent = '0 / 0';
   progressMessage.textContent = '';
   progressElapsed.textContent = '';
 }
 
-const STAGE_ORDER = ['upload','parse','glossary','translate','docx','pdf'];
+const STAGE_ORDER = ['upload','parse','glossary','awaiting_review','translate','docx','pdf'];
 const STAGE_LABEL = {
   upload: '업로드',
   parse: 'Document Parse 호출',
   glossary: '용어집 추출',
+  awaiting_review: '용어집 검토 대기',
   translate: '요소별 번역',
   docx: 'Word 문서 조립',
   pdf: 'PDF 변환',
@@ -313,7 +405,75 @@ function fmtElapsed(sec) {
   return m > 0 ? `${m}분 ${s}초` : `${s}초`;
 }
 
+function renderReviewRows(mapping) {
+  reviewBody.innerHTML = '';
+  const entries = Object.entries(mapping || {});
+  if (entries.length === 0) {
+    addReviewRow('', '');
+  } else {
+    for (const [en, ko] of entries) addReviewRow(en, ko);
+  }
+  updateReviewCounter();
+}
+
+function addReviewRow(en, ko) {
+  const tr = document.createElement('tr');
+  const tdEn = document.createElement('td');
+  const tdKo = document.createElement('td');
+  const tdAct = document.createElement('td');
+  const enInput = document.createElement('input');
+  enInput.type = 'text'; enInput.className = 'en'; enInput.value = en || '';
+  enInput.placeholder = 'matrix';
+  const koInput = document.createElement('input');
+  koInput.type = 'text'; koInput.className = 'ko'; koInput.value = ko || '';
+  koInput.placeholder = '행렬';
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button'; delBtn.className = 'del'; delBtn.textContent = '삭제';
+  delBtn.addEventListener('click', () => { tr.remove(); updateReviewCounter(); });
+  tdEn.appendChild(enInput);
+  tdKo.appendChild(koInput);
+  tdAct.appendChild(delBtn);
+  tr.appendChild(tdEn); tr.appendChild(tdKo); tr.appendChild(tdAct);
+  reviewBody.appendChild(tr);
+  updateReviewCounter();
+}
+
+function updateReviewCounter() {
+  const n = reviewBody.querySelectorAll('tr').length;
+  reviewCounter.textContent = `${n}개 용어`;
+}
+
+function collectGlossaryFromUI() {
+  const map = {};
+  for (const tr of reviewBody.querySelectorAll('tr')) {
+    const en = (tr.querySelector('input.en')?.value || '').trim();
+    const ko = (tr.querySelector('input.ko')?.value || '').trim();
+    if (en && ko) map[en] = ko;
+  }
+  return map;
+}
+
+addRowBtn.addEventListener('click', () => addReviewRow('', ''));
+
+async function waitForReviewConfirm() {
+  reviewCard.style.display = 'block';
+  reviewCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return new Promise(resolve => {
+    const handler = () => {
+      confirmGlossaryBtn.removeEventListener('click', handler);
+      const mapping = collectGlossaryFromUI();
+      confirmGlossaryBtn.disabled = true;
+      confirmGlossaryBtn.textContent = '재개 중…';
+      resolve(mapping);
+    };
+    confirmGlossaryBtn.addEventListener('click', handler);
+    confirmGlossaryBtn.disabled = false;
+    confirmGlossaryBtn.textContent = '이대로 번역 시작';
+  });
+}
+
 async function pollProgress(jobId) {
+  let reviewedAlready = false;
   while (true) {
     let snap;
     try {
@@ -335,6 +495,31 @@ async function pollProgress(jobId) {
     }
     if (snap.stage === 'error') {
       throw new Error(snap.error || '알 수 없는 오류');
+    }
+
+    if (snap.stage === 'awaiting_review' && !reviewedAlready) {
+      reviewedAlready = true;
+      applyStageState(snap.stage);
+      progressTitle.textContent = `대기 중 — ${STAGE_LABEL.awaiting_review}`;
+      progressMessage.textContent = snap.message || '용어집을 확인해주세요';
+      progressFill.style.width = '50%';
+      progressCount.textContent = '검토 대기';
+      renderReviewRows(snap.glossary || {});
+      const edited = await waitForReviewConfirm();
+      const post = await fetch(`/jobs/${jobId}/glossary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ glossary: edited }),
+      });
+      if (!post.ok) {
+        const msg = await post.text();
+        confirmGlossaryBtn.disabled = false;
+        confirmGlossaryBtn.textContent = '이대로 번역 시작';
+        throw new Error(`용어집 제출 실패 (${post.status}): ${msg}`);
+      }
+      reviewCard.style.display = 'none';
+      await new Promise(r => setTimeout(r, 300));
+      continue;
     }
 
     applyStageState(snap.stage);
@@ -362,6 +547,7 @@ goBtn.addEventListener('click', async () => {
   fd.append('file', chosen);
   if (titleInput.value) fd.append('title', titleInput.value);
   fd.append('want_pdf', wantPdf.checked ? 'true' : 'false');
+  fd.append('interactive', interactiveCk.checked ? 'true' : 'false');
 
   try {
     const submit = await fetch('/translate', { method: 'POST', body: fd });

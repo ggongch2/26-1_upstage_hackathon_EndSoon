@@ -11,11 +11,16 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from pipeline import docx_builder, glossary as glossary_mod, mocks, parser as parser_mod, solar as solar_mod
 from pipeline.jobs import REGISTRY
 from pipeline.pdf_crop import PdfCropper
 from pipeline.translator import translate_elements
+
+
+class GlossaryUpdate(BaseModel):
+    glossary: dict[str, str]
 
 # Element categories where we capture an image crop from the original PDF
 # instead of trusting Document Parse's text/HTML extraction.
@@ -57,7 +62,13 @@ def mode() -> dict[str, bool]:
     return {"mock": _truthy(os.environ.get("MOCK_MODE"))}
 
 
-def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | None) -> None:
+def _run_pipeline(
+    job_id: str,
+    work_path: Path,
+    want_pdf: bool,
+    title: str | None,
+    interactive: bool,
+) -> None:
     mock_mode = _truthy(os.environ.get("MOCK_MODE"))
     try:
         try:
@@ -148,6 +159,23 @@ def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | Non
             glossary = glossary_mod.build_glossary(solar, parsed.full_text, on_progress=_gloss_cb)
         log.info("job %s :: glossary terms=%d", job_id, len(glossary.mapping))
 
+        # Expose extracted mapping so it's available in /jobs/{id}/progress
+        # even before the user opens the review UI.
+        REGISTRY.update(job_id, glossary=dict(glossary.mapping))
+
+        if interactive:
+            log.info("job %s :: awaiting glossary review", job_id)
+            edited = REGISTRY.await_glossary_review(job_id, glossary.mapping)
+            # If the job was failed/cancelled mid-wait, await returns the
+            # original mapping and we'd just keep going; the next state mutation
+            # would no-op anyway because the job is in 'error' state.
+            if edited != glossary.mapping:
+                log.info(
+                    "job %s :: glossary edited by user (%d → %d terms)",
+                    job_id, len(glossary.mapping), len(edited),
+                )
+            glossary = glossary_mod.Glossary(mapping=edited)
+
         REGISTRY.set_stage(
             job_id,
             "translate",
@@ -192,6 +220,7 @@ async def translate(
     file: UploadFile = File(...),
     want_pdf: bool = Form(False),
     title: str | None = Form(None),
+    interactive: bool = Form(False),
 ) -> JSONResponse:
     if not file.filename:
         raise HTTPException(400, "missing filename")
@@ -199,20 +228,23 @@ async def translate(
     job_id = uuid.uuid4().hex[:12]
     work_path = WORK_DIR / f"{job_id}_{file.filename}"
     work_path.write_bytes(await file.read())
-    log.info("job %s :: saved upload to %s", job_id, work_path)
+    log.info("job %s :: saved upload to %s interactive=%s", job_id, work_path, interactive)
 
     REGISTRY.create(job_id)
     REGISTRY.set_stage(job_id, "upload", message=f"{file.filename} 수신 완료")
 
     thread = threading.Thread(
         target=_run_pipeline,
-        args=(job_id, work_path, want_pdf, title),
+        args=(job_id, work_path, want_pdf, title, interactive),
         daemon=True,
         name=f"pipeline-{job_id}",
     )
     thread.start()
 
-    return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=202)
+    return JSONResponse(
+        {"job_id": job_id, "status": "queued", "interactive": interactive},
+        status_code=202,
+    )
 
 
 @app.get("/jobs/{job_id}/progress")
@@ -221,6 +253,28 @@ def job_progress(job_id: str) -> JSONResponse:
     if state is None:
         raise HTTPException(404, "job not found")
     return JSONResponse(state.to_dict())
+
+
+@app.post("/jobs/{job_id}/glossary")
+def update_glossary(job_id: str, body: GlossaryUpdate) -> JSONResponse:
+    """Receive the user-edited glossary and resume the paused pipeline thread."""
+    state = REGISTRY.get(job_id)
+    if state is None:
+        raise HTTPException(404, "job not found")
+    if state.stage != "awaiting_review":
+        raise HTTPException(
+            409, f"job is not awaiting review (current stage: {state.stage})"
+        )
+    cleaned = {
+        str(k).strip(): str(v).strip()
+        for k, v in body.glossary.items()
+        if str(k).strip() and str(v).strip()
+    }
+    ok = REGISTRY.resume_glossary_review(job_id, cleaned)
+    if not ok:
+        raise HTTPException(409, "no waiter to resume (race condition)")
+    log.info("job %s :: glossary review resumed with %d terms", job_id, len(cleaned))
+    return JSONResponse({"status": "resumed", "term_count": len(cleaned)})
 
 
 @app.get("/download/{name}")
