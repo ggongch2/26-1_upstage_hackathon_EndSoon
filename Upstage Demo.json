@@ -1,0 +1,479 @@
+{
+  "name": "Upstage Demo",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/document-digitization",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "document",
+              "inputDataFieldName": "source_pdf"
+            },
+            {
+              "name": "model",
+              "value": "document-parse"
+            },
+            {
+              "name": "ocr",
+              "value": "force"
+            },
+            {
+              "name": "base64_encoding",
+              "value": "['figure','chart','table']"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "7acd20db-924f-44a4-b4ba-0472f6153e66",
+      "name": "Upstage Document Parse",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "d7D83h56p4HLMmFS",
+          "name": "Header Auth account 2"
+        },
+        "httpBearerAuth": {
+          "id": "S8xQxgDxHvqZAxSr",
+          "name": "Upstage API Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Normalize Parsed Document\n *\n * 목적:\n * 1. Upstage Document Parse 응답에서 본문 HTML/Markdown/Text를 안정적으로 추출\n * 2. Form Trigger 입력값(bookTitle, courseName, preferredTerms)을 병합\n * 3. elements 요약 생성\n * 4. table/chart/figure/equation의 base64_encoding을 visualAssets로 분리\n *\n * 다음 노드에서 쓰는 핵심 필드:\n * - sourceDocument\n * - glossarySource\n * - elementSummary\n * - visualAssets\n * - visualAssetMeta\n */\n\nconst FORM_NODE_CANDIDATES = [\n  \"Form Trigger\",\n  \"On form submission\",\n  \"On Form Submission\",\n];\n\n// 1. Upstage Document Parse 응답 가져오기\nlet parseResult = $input.first().json;\n\n// n8n/HTTP 응답 형태에 따라 배열로 감싸져 있을 수 있으므로 방어 처리\nif (Array.isArray(parseResult)) {\n  parseResult = parseResult[0] || {};\n}\n\nif (parseResult && Array.isArray(parseResult.data)) {\n  parseResult = parseResult.data[0] || {};\n}\n\n// 2. Form Trigger 값 가져오기\nlet form = {};\n\nfor (const nodeName of FORM_NODE_CANDIDATES) {\n  try {\n    const candidate = $(nodeName).first().json || {};\n    if (candidate && Object.keys(candidate).length > 0) {\n      form = candidate;\n      break;\n    }\n  } catch (error) {\n    // 해당 이름의 노드가 없으면 무시\n  }\n}\n\n// 3. 유틸 함수\nfunction asString(value) {\n  if (value === null || value === undefined) return \"\";\n  if (typeof value === \"string\") return value;\n  if (typeof value === \"number\" || typeof value === \"boolean\") return String(value);\n\n  try {\n    return JSON.stringify(value);\n  } catch {\n    return \"\";\n  }\n}\n\nfunction getByPath(obj, path) {\n  return path.split(\".\").reduce((acc, key) => {\n    if (acc && Object.prototype.hasOwnProperty.call(acc, key)) {\n      return acc[key];\n    }\n    return undefined;\n  }, obj);\n}\n\nfunction firstNonEmptyByPaths(obj, paths) {\n  for (const path of paths) {\n    const value = getByPath(obj, path);\n    const text = asString(value).trim();\n\n    if (text) {\n      return {\n        path,\n        text,\n      };\n    }\n  }\n\n  return {\n    path: \"\",\n    text: \"\",\n  };\n}\n\nfunction decodeBasicEntities(text) {\n  return String(text || \"\")\n    .replaceAll(\"&nbsp;\", \" \")\n    .replaceAll(\"&amp;\", \"&\")\n    .replaceAll(\"&lt;\", \"<\")\n    .replaceAll(\"&gt;\", \">\")\n    .replaceAll(\"&quot;\", '\"')\n    .replaceAll(\"&#39;\", \"'\");\n}\n\nfunction htmlToPlainText(html) {\n  return decodeBasicEntities(\n    String(html || \"\")\n      .replace(/<br\\s*\\/?>/gi, \"\\n\")\n      .replace(/<\\/p>/gi, \"\\n\")\n      .replace(/<\\/caption>/gi, \"\\n\")\n      .replace(/<\\/h[1-6]>/gi, \"\\n\")\n      .replace(/<\\/tr>/gi, \"\\n\")\n      .replace(/<\\/td>/gi, \" | \")\n      .replace(/<[^>]+>/g, \" \")\n      .replace(/[ \\t]+/g, \" \")\n      .replace(/\\n\\s+/g, \"\\n\")\n      .trim()\n  );\n}\n\nfunction getElementHtml(element) {\n  return (\n    element?.content?.html ||\n    element?.html ||\n    element?.content?.markdown ||\n    element?.markdown ||\n    element?.content?.text ||\n    element?.text ||\n    \"\"\n  );\n}\n\nfunction getElementText(element) {\n  const html = getElementHtml(element);\n\n  if (html) {\n    return htmlToPlainText(html);\n  }\n\n  return asString(element?.text || element?.content?.text || \"\");\n}\n\nfunction getHtmlId(html) {\n  const match = String(html || \"\").match(/\\bid=[\"']([^\"']+)[\"']/i);\n  return match ? match[1] : \"\";\n}\n\nfunction normalizeCategory(category) {\n  const c = String(category || \"\").toLowerCase();\n\n  if (c === \"heading1\" || c === \"heading2\" || c === \"heading3\") return c;\n  if (c === \"chart\") return \"chart\";\n  if (c === \"figure\") return \"figure\";\n  if (c === \"table\") return \"table\";\n  if (c === \"equation\") return \"equation\";\n  if (c === \"caption\") return \"caption\";\n  if (c === \"list\") return \"list\";\n  if (c === \"header\") return \"header\";\n  if (c === \"footer\") return \"footer\";\n\n  return c || \"\";\n}\n\n// 4. elements 배열 수집\nfunction collectElements(obj) {\n  const candidates = [\n    obj?.elements,\n    obj?.content?.elements,\n    obj?.result?.elements,\n    obj?.output?.elements,\n  ];\n\n  for (const candidate of candidates) {\n    if (Array.isArray(candidate) && candidate.length > 0) {\n      return candidate;\n    }\n  }\n\n  if (Array.isArray(obj?.pages)) {\n    return obj.pages.flatMap((page, pageIndex) => {\n      const pageElements =\n        page?.elements ||\n        page?.content?.elements ||\n        page?.result?.elements ||\n        [];\n\n      if (!Array.isArray(pageElements)) return [];\n\n      return pageElements.map((element) => ({\n        ...element,\n        page:\n          element.page ||\n          element.page_number ||\n          page.page ||\n          page.page_number ||\n          pageIndex + 1,\n      }));\n    });\n  }\n\n  return [];\n}\n\nconst elements = collectElements(parseResult);\n\n// 5. pages에서 본문 수집\nfunction collectTextFromPages(obj) {\n  if (!Array.isArray(obj?.pages)) return \"\";\n\n  const chunks = [];\n\n  for (const page of obj.pages) {\n    const pageTextCandidate = firstNonEmptyByPaths(page, [\n      \"content.markdown\",\n      \"markdown\",\n      \"content.html\",\n      \"html\",\n      \"content.text\",\n      \"text\",\n    ]);\n\n    if (pageTextCandidate.text) {\n      chunks.push(pageTextCandidate.text);\n    }\n\n    const pageElements =\n      page?.elements ||\n      page?.content?.elements ||\n      page?.result?.elements ||\n      [];\n\n    if (Array.isArray(pageElements)) {\n      for (const element of pageElements) {\n        const elementTextCandidate = firstNonEmptyByPaths(element, [\n          \"content.markdown\",\n          \"markdown\",\n          \"content.html\",\n          \"html\",\n          \"content.text\",\n          \"text\",\n        ]);\n\n        if (elementTextCandidate.text) {\n          chunks.push(elementTextCandidate.text);\n        }\n      }\n    }\n  }\n\n  return chunks.join(\"\\n\\n\").trim();\n}\n\n// 6. elements에서 본문 수집\nfunction collectTextFromElements(elements) {\n  const chunks = [];\n\n  for (const element of elements) {\n    const elementTextCandidate = firstNonEmptyByPaths(element, [\n      \"content.markdown\",\n      \"markdown\",\n      \"content.html\",\n      \"html\",\n      \"content.text\",\n      \"text\",\n    ]);\n\n    if (elementTextCandidate.text) {\n      chunks.push(elementTextCandidate.text);\n    }\n  }\n\n  return chunks.join(\"\\n\\n\").trim();\n}\n\n// 7. 본문 추출 우선순위: content.markdown → markdown → content.html → html → text → pages → elements\nconst directTextCandidate = firstNonEmptyByPaths(parseResult, [\n  \"content.markdown\",\n  \"markdown\",\n  \"result.markdown\",\n  \"output.markdown\",\n\n  \"content.html\",\n  \"html\",\n  \"result.html\",\n  \"output.html\",\n\n  \"content.text\",\n  \"text\",\n  \"result.text\",\n  \"output.text\",\n]);\n\nlet sourceDocument = directTextCandidate.text;\nlet sourcePath = directTextCandidate.path;\n\nif (!sourceDocument) {\n  sourceDocument = collectTextFromPages(parseResult);\n  sourcePath = \"pages\";\n}\n\nif (!sourceDocument) {\n  sourceDocument = collectTextFromElements(elements);\n  sourcePath = \"elements\";\n}\n\nif (!sourceDocument || sourceDocument.trim().length === 0) {\n  throw new Error(\n    \"Upstage Document Parse 응답에서 번역 가능한 markdown/html/text를 찾지 못했습니다. Output JSON 구조를 확인해야 합니다.\"\n  );\n}\n\n// 8. base64 관련 유틸\nfunction normalizeBase64Value(value) {\n  if (value === null || value === undefined) {\n    return {\n      base64: \"\",\n      mimeType: \"\",\n      isDataUri: false,\n      sourceUrl: \"\",\n    };\n  }\n\n  // object 형태로 들어오는 경우 방어 처리\n  if (typeof value === \"object\") {\n    const nested =\n      value.base64 ||\n      value.base64_encoding ||\n      value.image_base64 ||\n      value.data ||\n      value.src ||\n      value.url ||\n      \"\";\n\n    return normalizeBase64Value(nested);\n  }\n\n  const raw = String(value || \"\").trim();\n\n  if (!raw) {\n    return {\n      base64: \"\",\n      mimeType: \"\",\n      isDataUri: false,\n      sourceUrl: \"\",\n    };\n  }\n\n  // 이미 URL인 경우\n  if (/^https?:\\/\\//i.test(raw)) {\n    return {\n      base64: \"\",\n      mimeType: \"\",\n      isDataUri: false,\n      sourceUrl: raw,\n    };\n  }\n\n  // data:image/png;base64,... 형태\n  const dataUriMatch = raw.match(/^data:([^;]+);base64,(.+)$/i);\n\n  if (dataUriMatch) {\n    return {\n      base64: dataUriMatch[2].replace(/\\s+/g, \"\"),\n      mimeType: dataUriMatch[1],\n      isDataUri: true,\n      sourceUrl: \"\",\n    };\n  }\n\n  const compact = raw.replace(/\\s+/g, \"\");\n\n  return {\n    base64: compact,\n    mimeType: guessMimeTypeFromBase64(compact),\n    isDataUri: false,\n    sourceUrl: \"\",\n  };\n}\n\nfunction guessMimeTypeFromBase64(base64) {\n  const s = String(base64 || \"\").slice(0, 20);\n\n  // JPEG base64는 보통 /9j/ 로 시작합니다.\n  if (s.startsWith(\"/9j/\")) return \"image/jpeg\";\n\n  // PNG base64는 보통 iVBOR 로 시작합니다.\n  if (s.startsWith(\"iVBOR\")) return \"image/png\";\n\n  // GIF\n  if (s.startsWith(\"R0lGOD\")) return \"image/gif\";\n\n  // WEBP\n  if (s.startsWith(\"UklGR\")) return \"image/webp\";\n\n  // Upstage table/chart crop은 현재 결과상 JPEG로 들어옵니다.\n  return \"image/jpeg\";\n}\n\nfunction getVisualCandidate(element) {\n  const candidates = [\n    element?.base64_encoding,\n    element?.base64,\n    element?.image_base64,\n    element?.image,\n    element?.src,\n    element?.url,\n    element?.content?.base64_encoding,\n    element?.content?.base64,\n    element?.content?.image_base64,\n    element?.content?.image,\n    element?.content?.src,\n    element?.content?.url,\n  ];\n\n  for (const candidate of candidates) {\n    const normalized = normalizeBase64Value(candidate);\n\n    if (normalized.base64 || normalized.sourceUrl) {\n      return normalized;\n    }\n  }\n\n  return {\n    base64: \"\",\n    mimeType: \"\",\n    isDataUri: false,\n    sourceUrl: \"\",\n  };\n}\n\nfunction isVisualCategory(category) {\n  return [\"table\", \"chart\", \"figure\", \"image\", \"equation\"].includes(\n    String(category || \"\").toLowerCase()\n  );\n}\n\n// 9. visualAssets 추출\nconst visualAssets = elements\n  .map((element, index) => {\n    const category = normalizeCategory(element?.category || element?.type || element?.label || \"\");\n    const html = getElementHtml(element);\n    const htmlId = getHtmlId(html);\n    const elementId =\n      element?.id !== undefined && element?.id !== null\n        ? String(element.id)\n        : htmlId || `visual_${index + 1}`;\n\n    const visualCandidate = getVisualCandidate(element);\n\n    return {\n      id: elementId,\n      category,\n      page: element?.page || element?.page_number || null,\n      html,\n      text: getElementText(element),\n      coordinates: Array.isArray(element?.coordinates) ? element.coordinates : [],\n      base64: visualCandidate.base64,\n      mimeType: visualCandidate.mimeType || \"image/jpeg\",\n      sourceUrl: visualCandidate.sourceUrl,\n      base64Length: visualCandidate.base64 ? visualCandidate.base64.length : 0,\n    };\n  })\n  .filter((asset) => {\n    return isVisualCategory(asset.category) && (asset.base64 || asset.sourceUrl);\n  });\n\n// 10. glossary용 발췌문\nconst glossarySource = sourceDocument.slice(0, 16000);\n\n// 11. element summary 생성\nconst elementSummary = elements.slice(0, 80).map((element, index) => {\n  const category = normalizeCategory(element?.category || element?.type || element?.label || \"\");\n  const html = getElementHtml(element);\n  const visualCandidate = getVisualCandidate(element);\n\n  return {\n    index: index + 1,\n    id:\n      element?.id !== undefined && element?.id !== null\n        ? String(element.id)\n        : getHtmlId(html) || \"\",\n    page: element?.page || element?.page_number || null,\n    category,\n    preview: html ? html.slice(0, 220) : getElementText(element).slice(0, 220),\n    hasBase64: Boolean(visualCandidate.base64),\n    base64Length: visualCandidate.base64 ? visualCandidate.base64.length : 0,\n  };\n});\n\n// 12. visual asset summary 생성\nconst visualAssetSummary = visualAssets.map((asset) => ({\n  id: asset.id,\n  category: asset.category,\n  page: asset.page,\n  mimeType: asset.mimeType,\n  base64Length: asset.base64Length,\n  hasSourceUrl: Boolean(asset.sourceUrl),\n  preview: asset.text ? asset.text.slice(0, 160) : asset.html.slice(0, 160),\n}));\n\n// 13. 최종 반환\nreturn [\n  {\n    json: {\n      bookTitle:\n        form.book_title ||\n        form.bookTitle ||\n        form[\"책/챕터 제목\"] ||\n        \"Translated Textbook\",\n\n      courseName:\n        form.course_name ||\n        form.courseName ||\n        form[\"과목명\"] ||\n        \"\",\n\n      preferredTerms:\n        form.preferred_terms ||\n        form.preferredTerms ||\n        form[\"선호 번역어\"] ||\n        form[\"선호 번역어 / 고정 용어\"] ||\n        \"\",\n\n      sourceDocument,\n      glossarySource,\n      sourcePath,\n\n      parseMeta: {\n        sourcePath,\n        sourceLength: sourceDocument.length,\n        glossarySourceLength: glossarySource.length,\n        elementCount: elements.length,\n        pageCount: Array.isArray(parseResult?.pages)\n          ? parseResult.pages.length\n          : parseResult?.usage?.pages || null,\n        hasContentMarkdown: Boolean(parseResult?.content?.markdown || parseResult?.markdown),\n        hasContentHtml: Boolean(parseResult?.content?.html || parseResult?.html),\n        model: parseResult?.model || \"\",\n        ocr: parseResult?.ocr ?? null,\n      },\n\n      elementSummary,\n\n      visualAssets,\n      visualAssetSummary,\n      visualAssetMeta: {\n        count: visualAssets.length,\n        categories: visualAssets.map((asset) => asset.category),\n        ids: visualAssets.map((asset) => asset.id),\n      },\n\n      sourcePreview: sourceDocument.slice(0, 1000),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "a2d56fa0-5735-4cff-befa-52a385e0cfc3",
+      "name": "Normalize Parsed Document"
+    },
+    {
+      "parameters": {
+        "formTitle": "UpBook: 영어 원서 한국어 학습노트 변환기",
+        "formDescription": "영어 원서 PDF를 업로드하면 Upstage Document Parse와 Solar LLM을 이용해 한국어 학습노트로 재구성합니다.\n\n데모에서는 PDF 구조 분석, 용어사전 생성, 한국어 번역, Notion 페이지 생성을 자동화합니다.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "영어 원서 PDF",
+              "fieldType": "file",
+              "fieldName": "source_pdf",
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "책/챕터 제목",
+              "fieldName": "book_title",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "과목명",
+              "fieldName": "course_name",
+              "placeholder": "예: 선형대수학, 미적분학, 일반물리학"
+            },
+            {
+              "fieldLabel": "선호 번역어 / 고정 용어",
+              "fieldType": "textarea",
+              "fieldName": "preferred_terms",
+              "placeholder": "eigenvalue=고윳값, eigenvector=고유벡터, linear transformation=선형변환"
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "학습노트 생성하기",
+          "path": "upbook-demo"
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        0
+      ],
+      "id": "35d4d15f-190c-4934-b71d-306ea9fa63a8",
+      "name": "Form Trigger",
+      "webhookId": "c79f26ff-16cc-4dec-8384-e80e5be79029"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  model: \"solar-pro3\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"반드시 하나의 유효한 JSON 배열만 반환한다. 중요 : 여러 JSON 객체를 따로따로 나열하지 마라. 각 객체 사이에는 반드시 쉼표를 넣어라. 전체 결과는 반드시 [ 로 시작해서 ] 로 끝나야 한다. 설명 문장, Markdown, 코드블록, 주석을 쓰지 마라. JSON 이외의 텍스트를 절대 출력하지 마라.\"\n    },\n    {\n      role: \"user\",\n      content:\n`아래 문서는 Upstage Document Parse가 추출한 HTML/Markdown 구조 문서입니다.\n\n중요 규칙:\n1. HTML 태그명, id, style, data-category 같은 메타데이터는 용어로 추출하지 마십시오.\n2. 데이터과학, 머신러닝, 통계, 수학 학습에서 중요한 영어 전문 용어만 추출하십시오.\n3. 너무 일반적인 단어는 제외하십시오. 단, 문맥상 전공 개념이면 포함해도 됩니다.\n4. 사용자가 지정한 선호 번역어가 문서에 등장하면 반드시 그 번역어를 우선 적용하십시오.\n5. 사용자가 지정했더라도 문서에 등장하지 않는 용어는 억지로 포함하지 마십시오.\n6. 최대 20개까지만 추출하십시오.\n7. 결과는 JSON 배열만 반환하십시오.\n\n반환 형식:\n[\n  {\n    \"source\": \"영어 용어\",\n    \"ko\": \"권장 한국어 번역\",\n    \"note\": \"짧은 이유\"\n  }\n]\n\n[문서 제목]\n${$json.bookTitle || \"\"}\n\n[과목명]\n${$json.courseName || \"\"}\n\n[사용자 선호 번역어]\n${$json.preferredTerms || \"(없음)\"}\n\n[문서 발췌]\n${($json.glossarySource || $json.sourceDocument || \"\").slice(0, 14000)}`\n    }\n  ],\n  temperature: 0.1,\n  max_tokens: 2000,\n  stream: false\n}\n}}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        0
+      ],
+      "id": "93acbb6c-7df2-4020-854a-803052e9d797",
+      "name": "Solar Extract Glossary",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "S8xQxgDxHvqZAxSr",
+          "name": "Upstage API Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Normalize Parsed Document 결과 가져오기\nconst base = $(\"Normalize Parsed Document\").first().json;\n\n// 2. Solar Extract Glossary 응답 가져오기\nconst solarResponse = $input.first().json;\n\n// 3. Solar 응답 본문 추출\nlet raw =\n  solarResponse.choices?.[0]?.message?.content ??\n  solarResponse.choices?.[0]?.text ??\n  solarResponse.content ??\n  solarResponse.text ??\n  \"\";\n\nraw = String(raw).trim();\n\nif (!raw) {\n  throw new Error(\"Solar 응답에서 content를 찾지 못했습니다.\");\n}\n\n// 4. 코드블록 제거\nraw = raw\n  .replace(/^```json\\s*/i, \"\")\n  .replace(/^```\\s*/i, \"\")\n  .replace(/\\s*```$/i, \"\")\n  .trim();\n\n// 5. JSON 파싱 보조 함수들\nfunction normalizeGlossary(parsed) {\n  if (Array.isArray(parsed)) {\n    return parsed;\n  }\n\n  if (parsed && typeof parsed === \"object\") {\n    if (Array.isArray(parsed.terms)) return parsed.terms;\n    if (Array.isArray(parsed.glossary)) return parsed.glossary;\n    if (Array.isArray(parsed.items)) return parsed.items;\n\n    // 단일 객체 하나만 온 경우\n    if (parsed.source && parsed.ko) return [parsed];\n  }\n\n  return [];\n}\n\nfunction tryParseJson(text) {\n  try {\n    return JSON.parse(text);\n  } catch {\n    return null;\n  }\n}\n\nfunction extractJsonArrayText(text) {\n  const start = text.indexOf(\"[\");\n  const end = text.lastIndexOf(\"]\");\n\n  if (start === -1 || end === -1 || end <= start) {\n    return null;\n  }\n\n  return text.slice(start, end + 1);\n}\n\n// 여러 JSON 객체가 공백으로 이어진 경우를 처리합니다.\n// 예: {\"source\":\"a\"} {\"source\":\"b\"} {\"source\":\"c\"}\nfunction extractBalancedJsonObjects(text) {\n  const objects = [];\n\n  let start = -1;\n  let depth = 0;\n  let inString = false;\n  let escape = false;\n\n  for (let i = 0; i < text.length; i++) {\n    const ch = text[i];\n\n    if (escape) {\n      escape = false;\n      continue;\n    }\n\n    if (ch === \"\\\\\") {\n      escape = true;\n      continue;\n    }\n\n    if (ch === \"\\\"\") {\n      inString = !inString;\n      continue;\n    }\n\n    if (inString) {\n      continue;\n    }\n\n    if (ch === \"{\") {\n      if (depth === 0) {\n        start = i;\n      }\n      depth++;\n    }\n\n    if (ch === \"}\") {\n      depth--;\n\n      if (depth === 0 && start !== -1) {\n        const candidate = text.slice(start, i + 1);\n        const parsed = tryParseJson(candidate);\n\n        if (parsed) {\n          objects.push(parsed);\n        }\n\n        start = -1;\n      }\n    }\n  }\n\n  return objects;\n}\n\n// 6. 파싱 시도 순서\nlet glossary = [];\nlet parseStrategy = \"\";\n\n// A. 응답 전체가 정상 JSON인 경우\nconst parsedWhole = tryParseJson(raw);\nglossary = normalizeGlossary(parsedWhole);\n\nif (glossary.length > 0) {\n  parseStrategy = \"whole_json\";\n}\n\n// B. 응답 안에 JSON 배열이 들어 있는 경우\nif (glossary.length === 0) {\n  const arrayText = extractJsonArrayText(raw);\n\n  if (arrayText) {\n    const parsedArray = tryParseJson(arrayText);\n    glossary = normalizeGlossary(parsedArray);\n\n    if (glossary.length > 0) {\n      parseStrategy = \"json_array_inside_text\";\n    }\n  }\n}\n\n// C. JSON 객체 여러 개가 이어진 경우\nif (glossary.length === 0) {\n  const objects = extractBalancedJsonObjects(raw);\n  glossary = objects.flatMap((obj) => normalizeGlossary(obj));\n\n  if (glossary.length > 0) {\n    parseStrategy = \"multiple_json_objects\";\n  }\n}\n\nif (glossary.length === 0) {\n  throw new Error(\n    \"용어사전을 파싱하지 못했습니다. Solar 응답 원문 앞부분: \" + raw.slice(0, 1200)\n  );\n}\n\n// 7. 필드 정리\nglossary = glossary\n  .filter((item) => item && typeof item === \"object\")\n  .map((item) => ({\n    source: String(item.source || \"\").trim(),\n    ko: String(item.ko || \"\").trim(),\n    note: String(item.note || \"\").trim(),\n  }))\n  .filter((item) => item.source && item.ko);\n\n// 8. 중복 제거\nconst seen = new Set();\n\nglossary = glossary.filter((item) => {\n  const key = item.source.toLowerCase();\n\n  if (seen.has(key)) {\n    return false;\n  }\n\n  seen.add(key);\n  return true;\n});\n\n// 9. 너무 많은 경우 데모 안정성을 위해 20개로 제한\nglossary = glossary.slice(0, 20);\n\n// 10. 다음 노드에서 쓰기 좋은 형태로 반환\nreturn [\n  {\n    json: {\n      ...base,\n\n      glossary,\n      glossaryJson: JSON.stringify(glossary, null, 2),\n\n      glossaryPreview: glossary\n        .map((item, index) => {\n          return `${index + 1}. ${item.source} → ${item.ko} (${item.note})`;\n        })\n        .join(\"\\n\"),\n\n      glossaryMeta: {\n        termCount: glossary.length,\n        rawLength: raw.length,\n        parseStrategy,\n      },\n\n      glossaryRawPreview: raw.slice(0, 1200),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "83d669ff-99cf-4ba2-8e52-21fc9b576433",
+      "name": "Parse Glossary JSON"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// 반드시 실제 Notion 부모 페이지 ID로 교체하십시오.\nconst NOTION_PARENT_PAGE_ID = \"35f62647393980f1b62bf5e942a796c2\";\n\nif (\n  !NOTION_PARENT_PAGE_ID ||\n  NOTION_PARENT_PAGE_ID.includes(\"여기에\")\n) {\n  throw new Error(\"NOTION_PARENT_PAGE_ID를 실제 Notion 부모 페이지 ID로 교체해야 합니다.\");\n}\n\nconst title = data.bookTitle || \"번역 학습 노트\";\nconst courseName = data.courseName || \"미입력\";\nconst glossary = Array.isArray(data.glossary) ? data.glossary : [];\nconst parseMeta = data.parseMeta || {};\nconst translationMeta = data.translationMeta || {};\nconst structureChecks = translationMeta.structureChecks || {};\n\nfunction escapeHtml(value) {\n  return String(value ?? \"\")\n    .replaceAll(\"&\", \"&amp;\")\n    .replaceAll(\"<\", \"&lt;\")\n    .replaceAll(\">\", \"&gt;\")\n    .replaceAll('\"', \"&quot;\");\n}\n\nfunction yesNo(value) {\n  return value ? \"✅\" : \"❌\";\n}\n\nfunction stripLeadingH1(markdown) {\n  return String(markdown || \"\")\n    .replace(/^#\\s+[^\\n]*(\\n+|$)/, \"\")\n    .trim();\n}\n\nconst glossaryRows = glossary.map((item) => {\n  return [\n    \"\\t<tr>\",\n    `\\t\\t<td>${escapeHtml(item.source)}</td>`,\n    `\\t\\t<td>${escapeHtml(item.ko)}</td>`,\n    `\\t\\t<td>${escapeHtml(item.note || \"\")}</td>`,\n    \"\\t</tr>\",\n  ].join(\"\\n\");\n}).join(\"\\n\");\n\nconst glossaryTable = glossary.length > 0\n  ? [\n      '<table fit-page-width=\"true\" header-row=\"true\">',\n      \"\\t<tr>\",\n      \"\\t\\t<td>English Term</td>\",\n      \"\\t\\t<td>한국어 번역어</td>\",\n      \"\\t\\t<td>Note</td>\",\n      \"\\t</tr>\",\n      glossaryRows,\n      \"</table>\",\n    ].join(\"\\n\")\n  : \"추출된 용어가 없습니다.\";\n\nconst validationTable = [\n  '<table fit-page-width=\"true\" header-row=\"true\">',\n  \"\\t<tr>\",\n  \"\\t\\t<td>검증 항목</td>\",\n  \"\\t\\t<td>결과</td>\",\n  \"\\t</tr>\",\n  \"\\t<tr>\",\n  \"\\t\\t<td>한국어 번역 생성</td>\",\n  `\\t\\t<td>${yesNo(structureChecks.hasKorean)}</td>`,\n  \"\\t</tr>\",\n  \"\\t<tr>\",\n  \"\\t\\t<td>제목 구조 보존</td>\",\n  `\\t\\t<td>${yesNo(structureChecks.hasHeading)}</td>`,\n  \"\\t</tr>\",\n  \"\\t<tr>\",\n  \"\\t\\t<td>표 구조 보존</td>\",\n  `\\t\\t<td>${yesNo(structureChecks.hasTable)}</td>`,\n  \"\\t</tr>\",\n  \"\\t<tr>\",\n  \"\\t\\t<td>그림/캡션 보존</td>\",\n  `\\t\\t<td>${yesNo(structureChecks.hasFigureCaption)}</td>`,\n  \"\\t</tr>\",\n  \"\\t<tr>\",\n  \"\\t\\t<td>리스트 구조 보존</td>\",\n  `\\t\\t<td>${yesNo(structureChecks.hasList)}</td>`,\n  \"\\t</tr>\",\n  \"\\t<tr>\",\n  \"\\t\\t<td>용어사전 적용</td>\",\n  `\\t\\t<td>${translationMeta.appliedGlossaryCount || 0} / ${translationMeta.totalGlossaryCount || glossary.length}</td>`,\n  \"\\t</tr>\",\n  \"</table>\",\n].join(\"\\n\");\n\nconst translatedBody = stripLeadingH1(data.translatedMarkdown);\n\nconst now = new Date().toISOString();\n\nconst finalMarkdown = `\n# ${title}\n\n<callout icon=\"📚\" color=\"blue_bg\">\n\\t이 페이지는 Upstage Document Parse로 PDF 구조를 분석하고, Solar LLM으로 용어 일관성을 반영해 생성한 한국어 학습 노트입니다.\n</callout>\n\n## 1. 데모 요약\n\n- 과목: ${courseName}\n- 생성 시각: ${now}\n- 원문 추출 경로: ${parseMeta.sourcePath || data.sourcePath || \"unknown\"}\n- 원문 길이: ${parseMeta.sourceLength || 0}자\n- 감지된 문서 요소 수: ${parseMeta.elementCount || 0}\n- 용어사전 항목 수: ${glossary.length}\n- 번역 결과 길이: ${translationMeta.translatedLength || 0}자\n\n## 2. 자동 추출 용어사전\n\n${glossaryTable}\n\n## 3. 구조 보존 및 번역 검증\n\n${validationTable}\n\n---\n\n## 4. 한국어 재구성 학습 노트\n\n${translatedBody}\n\n---\n\n## 5. 데모 메시지\n\n- 원서 PDF 업로드 후 문단, 표, 캡션, 차트 요소를 자동 추출했습니다.\n- 전문 용어사전을 먼저 생성해 번역어 일관성을 확보했습니다.\n- 최종 결과를 Notion 학습 노트로 자동 생성했습니다.\n`.trim();\n\nconst notionPayload = {\n  parent: {\n    page_id: NOTION_PARENT_PAGE_ID,\n  },\n  markdown: finalMarkdown,\n};\n\nreturn [\n  {\n    json: {\n      ...data,\n\n      finalMarkdown,\n      finalMarkdownPreview: finalMarkdown.slice(0, 2000),\n\n      notionCreatePageBodyJson: JSON.stringify(notionPayload),\n      notionCreatePageBodyPreview: JSON.stringify(notionPayload, null, 2).slice(0, 2000),\n\n      notionMeta: {\n        parentPageId: NOTION_PARENT_PAGE_ID,\n        finalMarkdownLength: finalMarkdown.length,\n      },\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        0
+      ],
+      "id": "952bb6a9-4c8d-486a-84ac-1f80af6097e5",
+      "name": "Build Notion Page Body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2026-03-11"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.notionCreatePageBodyJson }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2480,
+        0
+      ],
+      "id": "e32189c2-ad69-4eca-b8ef-6b093eab132c",
+      "name": "Create Notion Page",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "le73le85oWSiHwLO",
+          "name": "Notion API Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst sourceDocument = String(data.sourceDocument || \"\");\nconst glossaryJson = data.glossaryJson || \"[]\";\n\nfunction decodeBasicEntities(text) {\n  return String(text || \"\")\n    .replaceAll(\"&nbsp;\", \" \")\n    .replaceAll(\"&amp;\", \"&\")\n    .replaceAll(\"&lt;\", \"<\")\n    .replaceAll(\"&gt;\", \">\")\n    .replaceAll(\"&quot;\", '\"')\n    .replaceAll(\"&#39;\", \"'\");\n}\n\nfunction htmlToText(html) {\n  return decodeBasicEntities(\n    String(html || \"\")\n      .replace(/<br\\s*\\/?>/gi, \"\\n\")\n      .replace(/<\\/p>/gi, \"\\n\")\n      .replace(/<\\/caption>/gi, \"\\n\")\n      .replace(/<\\/h[1-6]>/gi, \"\\n\")\n      .replace(/<[^>]+>/g, \" \")\n      .replace(/[ \\t]+/g, \" \")\n      .replace(/\\n\\s+/g, \"\\n\")\n      .trim()\n  );\n}\n\nfunction getAttr(html, attrName) {\n  const re = new RegExp(`${attrName}=[\"']([^\"']+)[\"']`, \"i\");\n  const match = String(html || \"\").match(re);\n  return match ? match[1] : \"\";\n}\n\nfunction getElementId(html, fallback) {\n  return getAttr(html, \"id\") || fallback;\n}\n\nfunction extractFontSize(html) {\n  const style = getAttr(html, \"style\");\n  const match = style.match(/font-size\\s*:\\s*(\\d+)px/i);\n  return match ? Number(match[1]) : null;\n}\n\nfunction classifyBlock(rawHtml) {\n  const html = String(rawHtml || \"\");\n  const lower = html.toLowerCase();\n\n  if (lower.match(/^<br>\\s*<header/) || lower.startsWith(\"<header\")) return \"header\";\n  if (lower.match(/^<br>\\s*<footer/) || lower.startsWith(\"<footer\")) return \"footer\";\n  if (lower.startsWith(\"<figure\")) return \"figure\";\n  if (lower.startsWith(\"<table\")) return \"table\";\n  if (lower.startsWith(\"<caption\")) return \"caption\";\n  if (lower.match(/^<h[1-6]/)) return \"heading\";\n  if (lower.includes(\"data-category='list'\") || lower.includes('data-category=\"list\"')) return \"list\";\n\n  const text = htmlToText(html);\n  const fontSize = extractFontSize(html);\n\n  // 섹션 번호형 제목: 7.4.1 Evaluating Classifiers\n  if (/^\\d+(\\.\\d+)+\\s+/.test(text) && text.length <= 120) return \"heading\";\n\n  // 폰트가 크고 짧은 문장은 제목으로 승격\n  if (fontSize && fontSize >= 20 && text.length <= 120) return \"heading\";\n\n  return \"paragraph\";\n}\n\nfunction shouldDropBlock(block) {\n  const text = String(block.text || \"\").replace(/\\s+/g, \" \").trim();\n\n  // 일반 원서/논문 PDF에서 header/footer는 대부분 running header/page number입니다.\n  if (block.type === \"header\" || block.type === \"footer\") return true;\n\n  // 혹시 header로 분류되지 않았어도 순수 페이지 번호는 제거\n  if (/^\\d{1,5}$/.test(text)) return true;\n  if (/^p\\.?\\s*\\d{1,5}$/i.test(text)) return true;\n\n  return false;\n}\n\nfunction extractRowsFromTableHtml(html, tableId) {\n  const rows = [];\n  const trMatches = String(html || \"\").match(/<tr\\b[\\s\\S]*?<\\/tr>/gi) || [];\n\n  trMatches.forEach((tr, rowIndex) => {\n    const cellMatches = tr.match(/<t[dh]\\b[\\s\\S]*?<\\/t[dh]>/gi) || [];\n    const row = [];\n\n    cellMatches.forEach((cellHtml, cellIndex) => {\n      const text = htmlToText(cellHtml);\n      const colspanMatch = cellHtml.match(/colspan=[\"']?(\\d+)[\"']?/i);\n      const rowspanMatch = cellHtml.match(/rowspan=[\"']?(\\d+)[\"']?/i);\n\n      row.push({\n        id: `${tableId}_r${rowIndex}_c${cellIndex}`,\n        text,\n        colspan: colspanMatch ? Number(colspanMatch[1]) : 1,\n        rowspan: rowspanMatch ? Number(rowspanMatch[1]) : 1,\n      });\n    });\n\n    if (row.length > 0) rows.push(row);\n  });\n\n  return rows;\n}\n\nfunction extractImageSrc(rawHtml) {\n  const html = String(rawHtml || \"\");\n  const srcMatch = html.match(/<img[^>]+src=[\"']([^\"']+)[\"']/i);\n  if (srcMatch?.[1]) return srcMatch[1];\n\n  // 현재 demo.pdf처럼 data-coord만 있는 경우를 기록\n  const coordMatch = html.match(/<img[^>]+data-coord=[\"']([^\"']+)[\"']/i);\n  if (coordMatch?.[1]) return \"\";\n\n  return \"\";\n}\n\nfunction needsTranslation(text) {\n  const s = String(text || \"\").trim();\n  if (!s) return false;\n\n  // 순수 숫자/기호 셀은 번역하지 않음\n  if (!/[A-Za-z가-힣]/.test(s)) return false;\n\n  return true;\n}\n\nconst blockRegex =\n  /<figure\\b[\\s\\S]*?<\\/figure>|<table\\b[\\s\\S]*?<\\/table>|<caption\\b[\\s\\S]*?<\\/caption>|<h[1-6]\\b[\\s\\S]*?<\\/h[1-6]>|<br>\\s*<header\\b[\\s\\S]*?<\\/header>|<header\\b[\\s\\S]*?<\\/header>|<br>\\s*<footer\\b[\\s\\S]*?<\\/footer>|<footer\\b[\\s\\S]*?<\\/footer>|<p\\b[\\s\\S]*?<\\/p>/gi;\n\nconst layoutBlocks = [];\nconst textUnits = [];\n\nlet match;\nlet fallbackIndex = 1;\n\nwhile ((match = blockRegex.exec(sourceDocument)) !== null) {\n  const rawHtml = match[0];\n  const type = classifyBlock(rawHtml);\n  const id = getElementId(rawHtml, `b${fallbackIndex++}`);\n  const text = htmlToText(rawHtml);\n  const fontSize = extractFontSize(rawHtml);\n  const drop = shouldDropBlock({ type, text });\n\n  const block = {\n    id,\n    type,\n    text,\n    rawHtml,\n    fontSize,\n    drop,\n  };\n\n  if (type === \"table\") {\n    block.rows = extractRowsFromTableHtml(rawHtml, id);\n  }\n\n  if (type === \"figure\") {\n    block.imageSrc = extractImageSrc(rawHtml);\n    block.rows = extractRowsFromTableHtml(rawHtml, id);\n  }\n\n  layoutBlocks.push(block);\n\n  if (drop) continue;\n\n  if ([\"heading\", \"paragraph\", \"list\", \"caption\"].includes(type) && needsTranslation(text)) {\n    textUnits.push({\n      id,\n      type,\n      text,\n    });\n  }\n\n  if (type === \"table\" && Array.isArray(block.rows)) {\n    for (const row of block.rows) {\n      for (const cell of row) {\n        if (needsTranslation(cell.text)) {\n          textUnits.push({\n            id: cell.id,\n            type: \"table_cell\",\n            text: cell.text,\n          });\n        }\n      }\n    }\n  }\n\n  if (type === \"figure\") {\n    // figure 내부 chart table의 셀 텍스트만 번역 대상으로 보냅니다.\n    if (Array.isArray(block.rows)) {\n      for (const row of block.rows) {\n        for (const cell of row) {\n          if (needsTranslation(cell.text)) {\n            textUnits.push({\n              id: cell.id,\n              type: \"figure_table_cell\",\n              text: cell.text,\n            });\n          }\n        }\n      }\n    }\n\n    const figcaption = htmlToText(\n      (rawHtml.match(/<figcaption\\b[\\s\\S]*?<\\/figcaption>/i) || [\"\"])[0]\n    );\n\n    if (needsTranslation(figcaption)) {\n      textUnits.push({\n        id: `${id}_figcaption`,\n        type: \"figure_caption\",\n        text: figcaption,\n      });\n    }\n  }\n}\n\nif (layoutBlocks.length === 0) {\n  throw new Error(\"sourceDocument에서 layout block을 찾지 못했습니다.\");\n}\n\nif (textUnits.length === 0) {\n  throw new Error(\"번역할 text unit을 찾지 못했습니다.\");\n}\n\nconst systemPrompt = `\n너는 영어 전공서 PDF를 한국어 학습 노트로 번역하는 엔진이다.\n\n반드시 JSON만 반환한다.\n표 구조, 그림 구조, 블록 순서를 재구성하지 마라.\n입력된 text unit의 id와 번역문만 반환하라.\n\n반환 형식:\n{\n  \"translations\": [\n    {\n      \"id\": \"원본 id\",\n      \"ko\": \"한국어 번역\"\n    }\n  ]\n}\n\n규칙:\n1. 모든 text unit id에 대해 번역 결과를 반환한다.\n2. 원문 내용을 요약하거나 생략하지 않는다.\n3. 수식, 변수명, 약어, TP, TN, FP, FN, F(tn), 1 ≤ i < n 같은 표현은 보존한다.\n4. 용어사전의 source는 반드시 ko로 일관되게 번역한다.\n5. 표, figure, HTML 태그를 새로 만들지 않는다.\n6. 설명 문장, Markdown 코드블록, 주석은 반환하지 않는다.\n`.trim();\n\nconst userPrompt = `\n[문서 제목]\n${data.bookTitle || \"\"}\n\n[과목명]\n${data.courseName || \"\"}\n\n[용어사전]\n${glossaryJson}\n\n[번역할 text units]\n${JSON.stringify(textUnits, null, 2)}\n`.trim();\n\nconst payload = {\n  model: \"solar-pro3\",\n  messages: [\n    {\n      role: \"system\",\n      content: systemPrompt,\n    },\n    {\n      role: \"user\",\n      content: userPrompt,\n    },\n  ],\n  temperature: 0.1,\n  max_tokens: 9000,\n  stream: false,\n};\n\nreturn [\n  {\n    json: {\n      ...data,\n      layoutBlocks,\n      textUnits,\n      layoutPolicyMeta: {\n        layoutBlockCount: layoutBlocks.length,\n        droppedBlockCount: layoutBlocks.filter((b) => b.drop).length,\n        textUnitCount: textUnits.length,\n        tableCount: layoutBlocks.filter((b) => b.type === \"table\").length,\n        figureCount: layoutBlocks.filter((b) => b.type === \"figure\").length,\n      },\n      solarTextOnlyBodyJson: JSON.stringify(payload),\n      solarTextOnlyBodyPreview: JSON.stringify(payload, null, 2).slice(0, 2500),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "c545187f-d43b-44ad-bd6a-51ef47d639eb",
+      "name": "Build Structured Translation Body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.solarTextOnlyBodyJson }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1872,
+        0
+      ],
+      "id": "01bae17b-4da7-44c8-b050-56aca47edd65",
+      "name": "Solar Translate Structured Blocks",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "d7D83h56p4HLMmFS",
+          "name": "Header Auth account 2"
+        },
+        "httpBearerAuth": {
+          "id": "S8xQxgDxHvqZAxSr",
+          "name": "Upstage API Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Rebuild Notion Markdown from Blocks\n *\n * 목적:\n * 1. Solar가 번역한 text unit을 layout block에 다시 합침\n * 2. header/footer는 제거된 상태를 유지\n * 3. table/chart/figure는 Markdown 표로 억지 재구성하지 않고,\n *    Cloudinary secure_url이 있으면 이미지로 삽입\n * 4. 이미지 URL이 없을 때만 fallback 메시지와 chart data를 출력\n */\n\nconst base = $(\"Collect Uploaded Asset URLs\").first().json;\nconst solarResponse = $input.first().json;\n\nlet raw =\n  solarResponse.choices?.[0]?.message?.content ??\n  solarResponse.choices?.[0]?.text ??\n  solarResponse.content ??\n  solarResponse.text ??\n  \"\";\n\nraw = String(raw).trim();\n\nif (!raw) {\n  throw new Error(\"Solar translation 응답에서 content를 찾지 못했습니다.\");\n}\n\nraw = raw\n  .replace(/^```json\\s*/i, \"\")\n  .replace(/^```\\s*/i, \"\")\n  .replace(/\\s*```$/i, \"\")\n  .trim();\n\nfunction tryParseJson(text) {\n  try {\n    return JSON.parse(text);\n  } catch {\n    return null;\n  }\n}\n\nfunction extractJsonObjectText(text) {\n  const start = text.indexOf(\"{\");\n  const end = text.lastIndexOf(\"}\");\n\n  if (start === -1 || end === -1 || end <= start) {\n    return text;\n  }\n\n  return text.slice(start, end + 1);\n}\n\nlet parsed = tryParseJson(raw);\n\nif (!parsed) {\n  parsed = tryParseJson(extractJsonObjectText(raw));\n}\n\nif (!parsed) {\n  throw new Error(\"번역 JSON 파싱 실패. 응답 앞부분: \" + raw.slice(0, 1200));\n}\n\nlet translations = [];\n\nif (Array.isArray(parsed.translations)) {\n  translations = parsed.translations;\n} else if (Array.isArray(parsed.blocks)) {\n  translations = parsed.blocks;\n} else if (Array.isArray(parsed)) {\n  translations = parsed;\n} else {\n  throw new Error(\"Solar 응답에 translations 배열이 없습니다.\");\n}\n\nconst translationMap = new Map();\n\nfor (const item of translations) {\n  if (!item || !item.id) continue;\n  translationMap.set(String(item.id), String(item.ko || \"\").trim());\n}\n\nconst visualAssetUrls = base.visualAssetUrls || {};\n\nfunction getAssetUrlForBlock(block) {\n  const id = String(block.id);\n  return visualAssetUrls[id]?.url || \"\";\n}\n\nfunction escapeHtml(value) {\n  return String(value ?? \"\")\n    .replaceAll(\"&\", \"&amp;\")\n    .replaceAll(\"<\", \"&lt;\")\n    .replaceAll(\">\", \"&gt;\");\n}\n\nfunction escapeMdCell(value) {\n  return String(value ?? \"\")\n    .replace(/\\|/g, \"\\\\|\")\n    .replace(/\\n+/g, \" \")\n    .trim();\n}\n\nfunction stripBullet(text) {\n  return String(text || \"\")\n    .replace(/^[-*·]\\s*/, \"\")\n    .trim();\n}\n\nfunction renderMarkdownTable(rows) {\n  if (!Array.isArray(rows) || rows.length === 0) return \"\";\n\n  const textRows = rows.map((row) =>\n    row.map((cell) => {\n      const translated = translationMap.get(cell.id);\n      return translated || cell.text || \"\";\n    })\n  );\n\n  const maxCols = Math.max(...textRows.map((r) => r.length));\n  const normalized = textRows.map((row) => {\n    const next = [...row];\n    while (next.length < maxCols) next.push(\"\");\n    return next;\n  });\n\n  if (normalized.length === 0 || maxCols === 0) return \"\";\n\n  const header = normalized[0].map(escapeMdCell).join(\" | \");\n  const sep = Array(maxCols).fill(\"---\").join(\" | \");\n  const body = normalized\n    .slice(1)\n    .map((row) => `| ${row.map(escapeMdCell).join(\" | \")} |`)\n    .join(\"\\n\");\n\n  return [`| ${header} |`, `| ${sep} |`, body].filter(Boolean).join(\"\\n\");\n}\n\nfunction renderHtmlTable(rows) {\n  if (!Array.isArray(rows) || rows.length === 0) return \"\";\n\n  const renderedRows = rows\n    .map((row) => {\n      const cells = row\n        .map((cell) => {\n          const translated = translationMap.get(cell.id);\n          const text = translated || cell.text || \"\";\n          const colspan =\n            cell.colspan && cell.colspan > 1 ? ` colspan=\"${cell.colspan}\"` : \"\";\n          const rowspan =\n            cell.rowspan && cell.rowspan > 1 ? ` rowspan=\"${cell.rowspan}\"` : \"\";\n\n          return `\\t\\t<td${colspan}${rowspan}>${escapeHtml(text)}</td>`;\n        })\n        .join(\"\\n\");\n\n      return `\\t<tr>\\n${cells}\\n\\t</tr>`;\n    })\n    .join(\"\\n\");\n\n  return [\n    '<table fit-page-width=\"true\" header-row=\"true\">',\n    renderedRows,\n    \"</table>\",\n  ].join(\"\\n\");\n}\n\nfunction isReliableTextTable(rows) {\n  if (!Array.isArray(rows) || rows.length < 2) return false;\n\n  const colCounts = rows.map((row) => row.length);\n  const maxCols = Math.max(...colCounts);\n  const minCols = Math.min(...colCounts);\n\n  if (maxCols !== minCols) return false;\n  if (maxCols < 2) return false;\n\n  const allCells = rows.flat();\n\n  const suspicious = allCells.some((cell) => {\n    const text = String(cell.text || \"\").trim();\n\n    const metricCount = (\n      text.match(/\\b(True|False|Positive|Negative|TP|TN|FP|FN|Yes|No)\\b/gi) || []\n    ).length;\n\n    return text.length > 80 || metricCount >= 4;\n  });\n\n  return !suspicious;\n}\n\nfunction renderBlock(block) {\n  if (!block || block.drop) return \"\";\n\n  if (block.type === \"heading\") {\n    const text = translationMap.get(block.id) || block.text || \"\";\n    return `## ${text}`;\n  }\n\n  if (block.type === \"paragraph\") {\n    return translationMap.get(block.id) || block.text || \"\";\n  }\n\n  if (block.type === \"list\") {\n    const text = translationMap.get(block.id) || block.text || \"\";\n    return `- ${stripBullet(text)}`;\n  }\n\n  if (block.type === \"caption\") {\n    let text = translationMap.get(block.id) || block.text || \"\";\n    text = text.replace(/^Figure\\s*/i, \"그림 \");\n    return `> ${text}`;\n  }\n\n  if (block.type === \"table\") {\n    const rows = block.rows || [];\n    const assetUrl = getAssetUrlForBlock(block);\n\n    if (assetUrl) {\n      const parts = [\n        \"#### 표\",\n        \"\",\n        `![원본 표 ${block.id}](${assetUrl})`,\n      ];\n\n      if (isReliableTextTable(rows)) {\n        parts.push(\"\");\n        parts.push(\"##### 표 텍스트 번역\");\n        parts.push(\"\");\n        parts.push(renderHtmlTable(rows));\n      }\n\n      return parts.join(\"\\n\");\n    }\n\n    if (isReliableTextTable(rows)) {\n      return renderHtmlTable(rows);\n    }\n\n    return [\n      \"#### 표\",\n      \"\",\n      \"<callout icon=\\\"📊\\\" color=\\\"gray_bg\\\">\",\n      \"\\t표 영역이 감지되었지만 업로드된 이미지 URL이 없습니다. Cloudinary 업로드 결과와 visualAssetUrls 매핑을 확인해야 합니다.\",\n      \"</callout>\",\n      \"\",\n      renderMarkdownTable(rows),\n    ].filter(Boolean).join(\"\\n\");\n  }\n\n  if (block.type === \"figure\" || block.type === \"chart\") {\n    const assetUrl = getAssetUrlForBlock(block);\n    const chartTable = renderMarkdownTable(block.rows || []);\n    const translatedFigcaption =\n      translationMap.get(`${block.id}_figcaption`) || \"\";\n\n    if (assetUrl) {\n      return [\n        \"#### 그림/차트\",\n        \"\",\n        `![${escapeMdCell(translatedFigcaption || \"그림/차트\")}](${assetUrl})`,\n        translatedFigcaption ? `\\n> ${translatedFigcaption}` : \"\",\n        chartTable ? \"\\n##### 차트 데이터\\n\\n\" + chartTable : \"\",\n      ].filter(Boolean).join(\"\\n\");\n    }\n\n    return [\n      \"#### 그림/차트\",\n      \"\",\n      \"<callout icon=\\\"📈\\\" color=\\\"blue_bg\\\">\",\n      \"\\t차트/그림 영역이 감지되었지만 업로드된 이미지 URL이 없습니다. Cloudinary 업로드 결과와 visualAssetUrls 매핑을 확인해야 합니다.\",\n      \"</callout>\",\n      chartTable ? \"\\n##### 차트 데이터\\n\\n\" + chartTable : \"\",\n      translatedFigcaption ? `\\n> ${translatedFigcaption}` : \"\",\n    ].filter(Boolean).join(\"\\n\");\n  }\n\n  return translationMap.get(block.id) || block.text || \"\";\n}\n\nconst layoutBlocks = Array.isArray(base.layoutBlocks) ? base.layoutBlocks : [];\n\nconst renderedBlocks = layoutBlocks\n  .map(renderBlock)\n  .filter((x) => String(x || \"\").trim().length > 0);\n\nconst translatedMarkdown = [\n  `# ${base.bookTitle || \"번역 학습 노트\"}`,\n  \"\",\n  ...renderedBlocks,\n].join(\"\\n\\n\");\n\nconst glossary = Array.isArray(base.glossary) ? base.glossary : [];\n\nconst glossaryChecks = glossary.map((term) => {\n  const ko = String(term.ko || \"\").trim();\n  const source = String(term.source || \"\").trim();\n\n  return {\n    source,\n    ko,\n    applied: ko ? translatedMarkdown.includes(ko) : false,\n  };\n});\n\nconst missingTextUnits = Array.isArray(base.textUnits)\n  ? base.textUnits\n      .filter((unit) => !translationMap.has(unit.id))\n      .map((unit) => ({\n        id: unit.id,\n        type: unit.type,\n        preview: String(unit.text || \"\").slice(0, 100),\n      }))\n  : [];\n\nconst structureChecks = {\n  hasHeading: /^#/m.test(translatedMarkdown),\n  hasTable:\n    translatedMarkdown.includes(\"![원본 표\") ||\n    translatedMarkdown.includes(\"<table\") ||\n    translatedMarkdown.includes(\"|\"),\n  hasFigureCaption:\n    translatedMarkdown.includes(\"그림\") ||\n    translatedMarkdown.includes(\"차트\") ||\n    translatedMarkdown.toLowerCase().includes(\"figure\"),\n  hasList: /^-\\s+/m.test(translatedMarkdown),\n  hasKorean: /[가-힣]/.test(translatedMarkdown),\n  hasUploadedTableImage: translatedMarkdown.includes(\"![원본 표\"),\n  hasUploadedChartImage: translatedMarkdown.includes(\"![\") && translatedMarkdown.includes(\"res.cloudinary.com\"),\n  removedHeaders:\n    !translatedMarkdown.includes(\"CHAPTER \") &&\n    !/^>\\s*p\\.\\s*\\d+/m.test(translatedMarkdown),\n};\n\nreturn [\n  {\n    json: {\n      ...base,\n\n      translatedMarkdown,\n      translationPreview: translatedMarkdown.slice(0, 3000),\n\n      translationMeta: {\n        translatedLength: translatedMarkdown.length,\n        model: solarResponse.model || \"\",\n        finishReason: solarResponse.choices?.[0]?.finish_reason || \"\",\n        structureChecks,\n        appliedGlossaryCount: glossaryChecks.filter((item) => item.applied).length,\n        totalGlossaryCount: glossaryChecks.length,\n        layoutBlockCount: layoutBlocks.length,\n        textUnitCount: Array.isArray(base.textUnits) ? base.textUnits.length : 0,\n        translatedUnitCount: translationMap.size,\n        missingTextUnitCount: missingTextUnits.length,\n        visualAssetUrlMeta: base.visualAssetUrlMeta || null,\n      },\n\n      glossaryChecks,\n      missingTextUnits,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        0
+      ],
+      "id": "40ead0ca-42e7-4add-a092-240a04c76cf2",
+      "name": "Rebuild Notion Markdown from Blocks"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst visualAssets = Array.isArray(data.visualAssets)\n  ? data.visualAssets\n  : [];\n\nconst uploadableAssets = visualAssets\n  .filter((asset) => asset.base64)\n  .map((asset, index) => {\n    const mimeType = asset.mimeType || \"image/jpeg\";\n\n    return {\n      assetId: String(asset.id),\n      category: asset.category || \"image\",\n      page: asset.page || null,\n      mimeType,\n      dataUri: `data:${mimeType};base64,${asset.base64}`,\n      publicId: `upbook_${Date.now()}_${index}_${asset.category || \"asset\"}_${asset.id}`,\n    };\n  });\n\nif (uploadableAssets.length === 0) {\n  return [\n    {\n      json: {\n        ...data,\n        skipVisualAssetUpload: true,\n        visualAssetUrls: {},\n      },\n    },\n  ];\n}\n\nreturn uploadableAssets.map((asset) => ({\n  json: asset,\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        0
+      ],
+      "id": "1e131040-ff1c-4c8a-b99b-95d94726666f",
+      "name": "Prepare Visual Assets for Upload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/dt48g2nw1/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $json.dataUri }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "upbook_unsigned"
+            },
+            {
+              "name": "folder",
+              "value": "upbook-demo"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1456,
+        0
+      ],
+      "id": "895240ea-837d-4412-ab3e-98b8b398801b",
+      "name": "Upload Visual Assets to Cloudinary"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Collect Uploaded Asset URLs\n *\n * 목적:\n * 1. Cloudinary 업로드 결과의 secure_url을 수집\n * 2. 원래 visual asset id와 URL을 매핑\n * 3. 다시 하나의 item으로 합쳐서 다음 Solar/Rebuild 노드에 전달\n */\n\nconst original = $(\"Build Structured Translation Body\").first().json;\n\nconst preparedItems = $(\"Prepare Visual Assets for Upload\")\n  .all()\n  .map((item) => item.json)\n  .filter((item) => !item.skipVisualAssetUpload);\n\nconst uploadedItems = $input.all().map((item) => item.json);\n\nconst visualAssetUrls = {};\n\nfor (let i = 0; i < preparedItems.length; i++) {\n  const prepared = preparedItems[i];\n  const uploaded = uploadedItems[i] || {};\n\n  const assetId = String(prepared.assetId || \"\");\n\n  if (!assetId) {\n    continue;\n  }\n\n  visualAssetUrls[assetId] = {\n    id: assetId,\n    category: prepared.category || \"\",\n    page: prepared.page || null,\n    mimeType: prepared.mimeType || \"\",\n    publicId: uploaded.public_id || prepared.publicId || \"\",\n    url: uploaded.secure_url || uploaded.url || \"\",\n    width: uploaded.width || null,\n    height: uploaded.height || null,\n    format: uploaded.format || \"\",\n    resourceType: uploaded.resource_type || \"\",\n  };\n}\n\nconst missingUrls = Object.entries(visualAssetUrls)\n  .filter(([id, asset]) => !asset.url)\n  .map(([id]) => id);\n\nif (preparedItems.length > 0 && Object.keys(visualAssetUrls).length === 0) {\n  throw new Error(\n    \"Cloudinary 업로드 결과에서 visual asset URL을 수집하지 못했습니다. Upload Visual Assets to Cloudinary 노드 Output을 확인하십시오.\"\n  );\n}\n\nreturn [\n  {\n    json: {\n      ...original,\n\n      visualAssetUrls,\n\n      visualAssetUrlMeta: {\n        count: Object.keys(visualAssetUrls).length,\n        ids: Object.keys(visualAssetUrls),\n        missingUrls,\n      },\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        0
+      ],
+      "id": "ec2e029b-f934-403c-ad47-18a78bd36a4c",
+      "name": "Collect Uploaded Asset URLs"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upstage Document Parse": {
+      "main": [
+        [
+          {
+            "node": "Normalize Parsed Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Upstage Document Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Parsed Document": {
+      "main": [
+        [
+          {
+            "node": "Solar Extract Glossary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solar Extract Glossary": {
+      "main": [
+        [
+          {
+            "node": "Parse Glossary JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Glossary JSON": {
+      "main": [
+        [
+          {
+            "node": "Build Structured Translation Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notion Page Body": {
+      "main": [
+        [
+          {
+            "node": "Create Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Structured Translation Body": {
+      "main": [
+        [
+          {
+            "node": "Prepare Visual Assets for Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solar Translate Structured Blocks": {
+      "main": [
+        [
+          {
+            "node": "Rebuild Notion Markdown from Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rebuild Notion Markdown from Blocks": {
+      "main": [
+        [
+          {
+            "node": "Build Notion Page Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Visual Assets for Upload": {
+      "main": [
+        [
+          {
+            "node": "Upload Visual Assets to Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Visual Assets to Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Collect Uploaded Asset URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Uploaded Asset URLs": {
+      "main": [
+        [
+          {
+            "node": "Solar Translate Structured Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6fcd32f8-836f-407c-b45c-91604616dc14",
+  "meta": {
+    "instanceId": "48a830a7649ac3adf7d66484fa96261b517030f27e4e2a56f053140bb5bc4c3c"
+  },
+  "id": "xnLSkzeAMrkemj9N",
+  "tags": []
+}

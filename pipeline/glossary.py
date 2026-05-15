@@ -36,6 +36,11 @@ GLOSSARY_USER_TMPL = (
 @dataclass
 class Glossary:
     mapping: dict[str, str]
+    preferred_keys: set[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.preferred_keys is None:
+            self.preferred_keys = set()
 
     def as_prompt_block(self) -> str:
         if not self.mapping:
@@ -52,6 +57,34 @@ class Glossary:
             pattern = re.compile(rf"\b{re.escape(en)}\b", flags=re.IGNORECASE)
             out = pattern.sub(ko, out)
         return out
+
+
+def parse_preferred_terms(text: str | None) -> dict[str, str]:
+    """Parse user-supplied 'en=ko' lines into a mapping. Empty/comment lines ignored."""
+    out: dict[str, str] = {}
+    if not text:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        en, ko = line.split("=", 1)
+        en, ko = en.strip(), ko.strip()
+        if en and ko:
+            out[en] = ko
+    return out
+
+
+def merge_preferred(glossary: Glossary, preferred: dict[str, str]) -> int:
+    """Merge preferred terms into glossary. User entries override auto-extracted ones."""
+    if not preferred:
+        return 0
+    for en, ko in preferred.items():
+        glossary.mapping[en] = ko
+        glossary.preferred_keys.add(en)
+    return len(preferred)
 
 
 def _chunk(text: str, size: int = 6000) -> list[str]:

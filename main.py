@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pipeline import docx_builder, glossary as glossary_mod, mocks, parser as parser_mod, solar as solar_mod
 from pipeline.jobs import REGISTRY
 from pipeline.pdf_crop import PdfCropper
-from pipeline.translator import translate_elements
+from pipeline.translator import build_translation_meta, translate_elements
 
 # Element categories where we capture an image crop from the original PDF
 # instead of trusting Document Parse's text/HTML extraction.
@@ -57,8 +57,15 @@ def mode() -> dict[str, bool]:
     return {"mock": _truthy(os.environ.get("MOCK_MODE"))}
 
 
-def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | None) -> None:
+def _run_pipeline(
+    job_id: str,
+    work_path: Path,
+    want_pdf: bool,
+    title: str | None,
+    preferred_terms_text: str | None,
+) -> None:
     mock_mode = _truthy(os.environ.get("MOCK_MODE"))
+    warnings: list[str] = []
     try:
         try:
             parser = mocks.MockParser() if mock_mode else parser_mod.from_env()
@@ -146,7 +153,12 @@ def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | Non
                 REGISTRY.update(job_id, processed=done, total=total)
 
             glossary = glossary_mod.build_glossary(solar, parsed.full_text, on_progress=_gloss_cb)
-        log.info("job %s :: glossary terms=%d", job_id, len(glossary.mapping))
+        preferred = glossary_mod.parse_preferred_terms(preferred_terms_text)
+        preferred_count = glossary_mod.merge_preferred(glossary, preferred)
+        log.info(
+            "job %s :: glossary terms=%d (preferred merged=%d)",
+            job_id, len(glossary.mapping), preferred_count,
+        )
 
         REGISTRY.set_stage(
             job_id,
@@ -160,25 +172,84 @@ def _run_pipeline(job_id: str, work_path: Path, want_pdf: bool, title: str | Non
 
         translated = translate_elements(solar, glossary, parsed.elements, on_progress=_trans_cb)
 
+        translation_meta = build_translation_meta(
+            translated, glossary, preferred_count=preferred_count,
+        )
+        log.info("job %s :: translation_meta=%s", job_id, translation_meta)
+
         REGISTRY.set_stage(job_id, "docx", message="Word 문서 조립 중")
         out_docx = OUTPUT_DIR / f"{job_id}_translated.docx"
-        docx_builder.build_docx(translated, out_docx, title=title or work_path.stem)
-        log.info("job %s :: wrote %s", job_id, out_docx)
+        try:
+            docx_builder.build_docx(translated, out_docx, title=title or work_path.stem)
+            log.info("job %s :: wrote %s", job_id, out_docx)
+        except Exception as e:
+            warnings.append(f"docx_build_failed: {type(e).__name__}: {e}")
+            raise
 
         out_pdf = None
         if want_pdf:
             REGISTRY.set_stage(job_id, "pdf", message="PDF 변환 중")
             out_pdf = docx_builder.docx_to_pdf(out_docx)
+            if out_pdf is None:
+                warnings.append("pdf_backend_unavailable: docx2pdf/LibreOffice not installed")
             log.info("job %s :: pdf=%s", job_id, out_pdf)
+
+        summary_path = OUTPUT_DIR / f"{job_id}_summary.json"
+        try:
+            import json as _json
+            from collections import Counter
+
+            cats = Counter(e.category for e in parsed.elements)
+            summary_payload = {
+                "job_id": job_id,
+                "input_filename": work_path.name,
+                "title": title or work_path.stem,
+                "mock_mode": mock_mode,
+                "stages": {
+                    "parse": {"element_count": len(parsed.elements)},
+                    "glossary": {
+                        "total_terms": len(glossary.mapping),
+                        "preferred_terms_applied": preferred_count,
+                    },
+                    "translate": translation_meta,
+                    "docx": {"output": str(out_docx)},
+                    "pdf": {"output": str(out_pdf) if out_pdf else None},
+                },
+                "category_counts": dict(cats),
+                "translation_meta": translation_meta,
+                "glossary": glossary.mapping,
+                "preferred_terms": sorted(glossary.preferred_keys),
+                "outputs": {
+                    "docx": str(out_docx),
+                    "pdf": str(out_pdf) if out_pdf else None,
+                    "raw_debug": str(OUTPUT_DIR / f"{job_id}_raw.json"),
+                    "summary": str(summary_path),
+                },
+                "warnings": warnings,
+            }
+            summary_path.write_text(
+                _json.dumps(summary_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            log.info("job %s :: summary → %s", job_id, summary_path)
+        except Exception:
+            log.exception("job %s :: summary JSON write failed (non-fatal)", job_id)
+            summary_path = None  # type: ignore[assignment]
 
         result = {
             "job_id": job_id,
             "docx": str(out_docx),
             "pdf": str(out_pdf) if out_pdf else None,
             "glossary": glossary.mapping,
+            "preferred_terms": sorted(glossary.preferred_keys),
             "element_count": len(parsed.elements),
+            "translation_meta": translation_meta,
+            "warnings": warnings,
             "download_docx": f"/download/{out_docx.name}",
             "download_pdf": f"/download/{out_pdf.name}" if out_pdf else None,
+            "download_summary": (
+                f"/download/{summary_path.name}" if summary_path else None
+            ),
         }
         REGISTRY.finish(job_id, result)
         log.info("job %s :: done", job_id)
@@ -192,6 +263,7 @@ async def translate(
     file: UploadFile = File(...),
     want_pdf: bool = Form(False),
     title: str | None = Form(None),
+    preferred_terms: str | None = Form(None),
 ) -> JSONResponse:
     if not file.filename:
         raise HTTPException(400, "missing filename")
@@ -206,7 +278,7 @@ async def translate(
 
     thread = threading.Thread(
         target=_run_pipeline,
-        args=(job_id, work_path, want_pdf, title),
+        args=(job_id, work_path, want_pdf, title, preferred_terms),
         daemon=True,
         name=f"pipeline-{job_id}",
     )

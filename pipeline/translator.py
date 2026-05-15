@@ -61,6 +61,7 @@ class TranslatedElement:
     element: Element
     translated_text: str
     translated_html: str
+    status: str = "translated"
 
 
 def _user_prompt(
@@ -309,30 +310,35 @@ def _translate_one(
     is_duplicate: bool = False,
 ) -> TranslatedElement:
     cat = elem.category.lower()
-    if cat in SKIP_CATEGORIES or cat in PASSTHROUGH_CATEGORIES:
-        return TranslatedElement(elem, elem.text, elem.html)
+    if cat in SKIP_CATEGORIES:
+        return TranslatedElement(elem, elem.text, elem.html, status=f"skip:{cat}")
+    if cat in PASSTHROUGH_CATEGORIES:
+        # equation/figure/chart with a base64 image (from Document Parse or PDF crop)
+        # will be rendered as image in docx; mark distinctly so meta can count.
+        status = f"image:{cat}" if elem.base64 else f"passthrough:{cat}"
+        return TranslatedElement(elem, elem.text, elem.html, status=status)
     if cat == "header":
         # Pure number = page number → drop; otherwise translate the running header.
         stripped = (elem.text or "").strip()
         if not stripped or stripped.replace(".", "").isdigit():
-            return TranslatedElement(elem, "", elem.html)
+            return TranslatedElement(elem, "", elem.html, status="skip:page_number")
         try:
             translated = _translate_text(solar, glossary, stripped)
+            return TranslatedElement(elem, translated, elem.html, status="translated:header")
         except Exception:
             log.exception("header translate failed; keeping original")
-            translated = stripped
-        return TranslatedElement(elem, translated, elem.html)
+            return TranslatedElement(elem, stripped, elem.html, status="fallback:translate_failed")
     if cat in TABLE_CATEGORIES:
         # If a PDF-cropped image is attached, skip translation entirely — the
         # docx will render the table as a faithful image of the original.
         if elem.base64:
-            return TranslatedElement(elem, elem.text, elem.html)
+            return TranslatedElement(elem, elem.text, elem.html, status="image:table")
         try:
             new_html = _translate_table_html(solar, glossary, elem.html)
+            return TranslatedElement(elem, elem.text, new_html, status="translated:table")
         except Exception:
             log.exception("table translate failed; keeping original")
-            new_html = elem.html
-        return TranslatedElement(elem, elem.text, new_html)
+            return TranslatedElement(elem, elem.text, elem.html, status="fallback:translate_failed")
 
     src = elem.text or elem.markdown
     # Drop matrix/table OCR residue — saves an API call AND avoids ugly pipe
@@ -341,20 +347,20 @@ def _translate_one(
     if _looks_like_ocr_garbage(src):
         log.info("translator: skipping OCR-garbage element id=%s page=%s text=%r",
                  elem.id, elem.page, src[:60])
-        return TranslatedElement(elem, "", elem.html)
+        return TranslatedElement(elem, "", elem.html, status="skip:ocr_garbage")
     if is_duplicate:
         log.info("translator: skipping duplicate element id=%s page=%s", elem.id, elem.page)
-        return TranslatedElement(elem, "", elem.html)
+        return TranslatedElement(elem, "", elem.html, status="skip:duplicate")
 
     try:
         translated = _translate_text(
             solar, glossary, src,
             prev_context=prev_text, next_context=next_text,
         )
+        return TranslatedElement(elem, translated, elem.html, status="translated")
     except Exception:
         log.exception("text translate failed; keeping original")
-        translated = elem.text
-    return TranslatedElement(elem, translated, elem.html)
+        return TranslatedElement(elem, elem.text, elem.html, status="fallback:translate_failed")
 
 
 def _detect_near_duplicates(items: list[Element]) -> set[int]:
@@ -459,7 +465,7 @@ def translate_elements(
             except Exception:
                 log.exception("worker failed for element %d; keeping original", idx)
                 e = items[idx]
-                results[idx] = TranslatedElement(e, e.text, e.html)
+                results[idx] = TranslatedElement(e, e.text, e.html, status="fallback:translate_failed")
             completed += 1
             if on_progress:
                 on_progress(completed, total)
@@ -467,3 +473,68 @@ def translate_elements(
                 log.info("translated %d/%d elements (workers=%d)", completed, total, workers)
 
     return [r for r in results if r is not None]
+
+
+def build_translation_meta(
+    translated: list[TranslatedElement],
+    glossary: Glossary,
+    *,
+    preferred_count: int = 0,
+) -> dict:
+    """Aggregate per-element statuses into the meta dict required by SUCCESS_CRITERIA P1."""
+    from collections import Counter
+
+    total = len(translated)
+    status_counts: Counter[str] = Counter(t.status for t in translated)
+
+    category_counts: Counter[str] = Counter(t.element.category.lower() for t in translated)
+
+    # Buckets requested by SUCCESS_CRITERIA.
+    skip_reasons = {
+        "header_footer_page_number": (
+            status_counts.get("skip:footer", 0)
+            + status_counts.get("skip:footnote", 0)
+            + status_counts.get("skip:page_number", 0)
+        ),
+        "duplicate": status_counts.get("skip:duplicate", 0),
+        "ocr_garbage": status_counts.get("skip:ocr_garbage", 0),
+        "passthrough_equation": status_counts.get("passthrough:equation", 0),
+        "passthrough_figure": status_counts.get("passthrough:figure", 0),
+        "passthrough_chart": status_counts.get("passthrough:chart", 0),
+    }
+    skipped_total = sum(skip_reasons.values())
+
+    image_preserved = {
+        "table": status_counts.get("image:table", 0),
+        "equation": status_counts.get("image:equation", 0),
+        "figure": status_counts.get("image:figure", 0),
+        "chart": status_counts.get("image:chart", 0),
+    }
+    image_preserved_total = sum(image_preserved.values())
+
+    fallback_count = status_counts.get("fallback:translate_failed", 0)
+
+    translated_count = (
+        status_counts.get("translated", 0)
+        + status_counts.get("translated:header", 0)
+        + status_counts.get("translated:table", 0)
+    )
+
+    # "Translation target" = everything except categorical skips/passthroughs/images.
+    translation_target = total - skipped_total - image_preserved_total
+
+    return {
+        "total_elements": total,
+        "translation_target": translation_target,
+        "translated": translated_count,
+        "skipped": skipped_total,
+        "skip_reasons": skip_reasons,
+        "image_preserved": image_preserved,
+        "image_preserved_total": image_preserved_total,
+        "fallback": fallback_count,
+        "kept_original_after_failure": fallback_count,
+        "glossary_size": len(glossary.mapping),
+        "preferred_terms_applied": preferred_count,
+        "category_counts": dict(category_counts),
+        "status_counts": dict(status_counts),
+    }
