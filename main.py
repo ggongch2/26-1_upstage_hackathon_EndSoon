@@ -147,6 +147,65 @@ def _run_pipeline(
         except Exception:
             log.exception("raw dump failed (non-fatal)")
 
+        # Element-level readable dumps for manual verification.
+        # *_parsed.jsonl — one element per line, scriptable with jq/grep.
+        # *_parsed.md   — eyes-friendly: page-grouped, base64 elided.
+        try:
+            import json
+
+            jsonl_path = OUTPUT_DIR / f"{job_id}_parsed.jsonl"
+            md_path = OUTPUT_DIR / f"{job_id}_parsed.md"
+
+            with jsonl_path.open("w", encoding="utf-8") as f:
+                for e in parsed.elements:
+                    f.write(json.dumps({
+                        "id": e.id,
+                        "page": e.page,
+                        "category": e.category,
+                        "text": e.text,
+                        "html": e.html if e.category.lower() == "table" else "",
+                        "markdown": e.markdown,
+                        "has_base64": bool(e.base64),
+                        "base64_bytes": len(e.base64) if e.base64 else 0,
+                        "coordinates": e.coordinates,
+                    }, ensure_ascii=False) + "\n")
+
+            md_lines: list[str] = [
+                f"# Parsed dump — job {job_id}",
+                "",
+                f"- Source: `{work_path.name}`",
+                f"- Elements: {len(parsed.elements)}",
+                "",
+            ]
+            current_page = None
+            for e in parsed.elements:
+                if e.page != current_page:
+                    current_page = e.page
+                    md_lines.append(f"\n## Page {current_page}\n")
+                tag = f"`[{e.id:>4} · {e.category}]`"
+                if e.base64:
+                    tag += f" *(base64 {len(e.base64)} chars attached)*"
+                md_lines.append(tag)
+                body = (e.text or "").strip()
+                if body:
+                    md_lines.append("")
+                    md_lines.append("> " + body.replace("\n", "\n> "))
+                elif e.category.lower() == "table" and e.html:
+                    md_lines.append("")
+                    md_lines.append("```html")
+                    md_lines.append(e.html.strip()[:1200])
+                    if len(e.html) > 1200:
+                        md_lines.append(f"... (+{len(e.html)-1200} chars)")
+                    md_lines.append("```")
+                md_lines.append("")
+            md_path.write_text("\n".join(md_lines), encoding="utf-8")
+            log.info(
+                "job %s :: parsed dumps → %s , %s",
+                job_id, jsonl_path.name, md_path.name,
+            )
+        except Exception:
+            log.exception("parsed dump failed (non-fatal)")
+
         REGISTRY.set_stage(
             job_id, "glossary", total=0, message=f"{len(parsed.elements)}개 요소에서 용어집 추출"
         )
