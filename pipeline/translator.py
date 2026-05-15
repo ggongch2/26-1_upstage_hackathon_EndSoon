@@ -58,30 +58,67 @@ GROUP_MAX_CHARS = 3500
 # 'header' is special: pure-number page headers (e.g. "198") are dropped,
 # but running chapter headers ("4.1 Two Pictures of Linear Equations") are translated.
 
-TRANSLATE_SYSTEM = (
-    "You are a precise English→Korean translator for STEM university textbooks.\n\n"
-    "ABSOLUTE RULES — violating any of these makes the output unusable:\n"
-    "1. Output EXACTLY ONE translation. NEVER multiple drafts, variants, alternatives, "
-    "or 'final versions'. Pick the single best Korean rendering and stop.\n"
-    "2. NO commentary, NO meta-explanations, NO translator notes — in ANY language. "
-    "Forbidden examples include but are not limited to: '**최종 번역:**', '**번역:**', "
-    "'[정확한 번역]', 'However, to strictly adhere…', 'This preserves the exact…', "
-    "'Note:', '(※ …)'. Output the translation as plain Korean prose only.\n"
-    "3. NO horizontal rules ('---'), NO bullet lists explaining choices, NO parenthetical "
-    "asides discussing terminology decisions. Just the translation.\n"
-    "4. Preserve any LaTeX (\\$...\\$, \\$\\$...\\$\\$, \\\\(...\\\\), \\\\[...\\\\]) and placeholders "
-    "like ⟦M0⟧ EXACTLY — byte for byte.\n"
-    "5. Preserve inline code, identifiers, numbers, units, and equation references verbatim.\n"
-    "6. Honor the supplied terminology mapping strictly.\n"
-    "7. DO NOT add markdown bold (**term**). The source is plain prose; emphasis is "
-    "NOT to be invented. Output plain text only.\n"
-    "8. STAY CLOSE TO SOURCE LENGTH. Output should be roughly the same length as the input. "
-    "DO NOT elaborate, expand, add background context, paraphrase generously, or invent "
-    "content. If the source is broken OCR or one short phrase, translate literally — "
-    "never substitute your own elaboration.\n\n"
-    "If the input is short, the output is short. If the input is one sentence, the output "
-    "is one sentence."
+# Two distinct system prompts — single-element and marker-batched. We deliberately
+# do NOT have the batch prompt inherit from the single one: the single prompt's
+# "exactly one translation / plain Korean prose only" rule directly conflicts with
+# batched output (multiple marker blocks). Keeping them separate avoids the model
+# guessing which regime applies.
+
+_COMMON_PRESERVE = (
+    "Preserve LaTeX ($...$, $$...$$, \\(...\\), \\[...\\]), MathML, placeholders "
+    "like ⟦M0⟧, inline code, identifiers, numbers, units, and equation references "
+    "EXACTLY — byte for byte.\n"
+    "Do NOT translate variable names, matrix entries, symbolic expressions, or "
+    "formula structure. Treat them as preserve-only tokens.\n"
 )
+_COMMON_FRAGMENT = (
+    "If the source is a fragment (heading, caption, list item, table cell, short "
+    "phrase), output a fragment of the same kind — not a full explanatory sentence. "
+    "Match source length and structure; do not elaborate.\n"
+    "For table cells, translate only natural-language text; preserve formulas, "
+    "symbols, abbreviations, and compact formatting as-is.\n"
+    "If the source is broken OCR or malformed math, translate as literally as "
+    "possible — never guess or substitute your own content.\n"
+)
+_COMMON_NO_META = (
+    "Do NOT add commentary, meta-explanations, translator notes, labels (e.g. "
+    "'**번역:**', '[정확한 번역]', '최종 번역'), horizontal rules ('---'), "
+    "markdown bold (**term**), or parenthetical asides — in any language.\n"
+)
+
+TRANSLATE_SYSTEM_SINGLE = (
+    "You are a precise English-to-Korean translator for STEM university textbooks.\n\n"
+    "Your task is to translate ONLY the text provided inside <source>...</source> "
+    "into natural Korean.\n\n"
+    "Rules:\n"
+    "1. Output exactly one Korean translation and nothing else — no surrounding tags.\n"
+    "2. " + _COMMON_NO_META
+    + "3. " + _COMMON_PRESERVE
+    + "4. " + _COMMON_FRAGMENT
+    + "5. Honor the supplied terminology mapping as a hard constraint.\n"
+    "6. Output plain Korean text only."
+)
+
+TRANSLATE_SYSTEM_BATCH = (
+    "You are a precise English-to-Korean translator for STEM university textbooks.\n\n"
+    "The input inside <segments>...</segments> contains multiple text blocks "
+    "wrapped in markers ⟦Ek⟧...⟦/Ek⟧. Translate the content inside each marker "
+    "block into Korean.\n\n"
+    "Rules:\n"
+    "1. Return the SAME markers in the SAME order — do not merge, split, skip, "
+    "reorder, or invent blocks.\n"
+    "2. Output nothing outside the marker blocks (no preamble, no trailing notes).\n"
+    "3. Inside each block, output exactly one Korean translation of that block.\n"
+    "4. " + _COMMON_PRESERVE
+    + "5. " + _COMMON_FRAGMENT
+    + "6. Honor the supplied terminology mapping as a hard constraint.\n"
+    "7. " + _COMMON_NO_META.rstrip()
+)
+
+# Backwards-compat alias — some external callers may still reference the
+# original name. Kept as the SINGLE variant since that matches its historical
+# semantics (element-by-element translation).
+TRANSLATE_SYSTEM = TRANSLATE_SYSTEM_SINGLE
 
 
 @dataclass
@@ -108,15 +145,15 @@ def _user_prompt(
             "DO NOT translate or include any of this in your output):"
         )
         if prev_context:
-            parts.append(f"[Previous text]\n{prev_context}")
+            parts.append(f"<previous>\n{prev_context}\n</previous>")
         if next_context:
-            parts.append(f"[Next text]\n{next_context}")
-    parts.append("TRANSLATE ONLY THE TEXT BETWEEN THE FENCES BELOW. Output translation only.")
-    parts.append("---")
+            parts.append(f"<next>\n{next_context}\n</next>")
+    parts.append("Translate only the text inside <source>. Do not translate anything outside it.")
+    parts.append("<source>")
     parts.append(payload)
-    parts.append("---")
+    parts.append("</source>")
     return [
-        {"role": "system", "content": TRANSLATE_SYSTEM},
+        {"role": "system", "content": TRANSLATE_SYSTEM_SINGLE},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
 
@@ -343,17 +380,6 @@ _MARKER_OPEN = "⟦E{}⟧"
 _MARKER_CLOSE = "⟦/E{}⟧"
 _MARKER_RE = re.compile(r"⟦E(\d+)⟧\s*(.*?)\s*⟦/E\1⟧", re.DOTALL)
 
-GROUP_SYSTEM = (
-    TRANSLATE_SYSTEM
-    + "\n\nBATCH FORMAT — STRICT:\n"
-    "The input is multiple text snippets wrapped in markers like "
-    "⟦E0⟧...⟦/E0⟧, ⟦E1⟧...⟦/E1⟧, etc. Translate EACH marker block and "
-    "return the SAME markers with translated content inside, in the SAME "
-    "ORDER. Do not merge blocks, do not skip blocks, do not add blocks, "
-    "do not put text outside markers. Preserve marker tokens (⟦Ek⟧, ⟦/Ek⟧) "
-    "EXACTLY — including the digit. No surrounding prose or commentary."
-)
-
 
 def _build_marked_payload(elems: list[Element]) -> tuple[str, list[Element]]:
     """Build the ⟦Ek⟧-wrapped payload. Returns (prompt_text, ordered_elements).
@@ -434,20 +460,20 @@ def _translate_page_chunk(
             "ONLY, DO NOT translate or include any of this in your output):"
         )
         if prev_context:
-            parts.append(f"[Previous text]\n{prev_context}")
+            parts.append(f"<previous>\n{prev_context}\n</previous>")
         if next_context:
-            parts.append(f"[Next text]\n{next_context}")
+            parts.append(f"<next>\n{next_context}\n</next>")
     parts.append(
-        "Translate each ⟦Ek⟧...⟦/Ek⟧ block. Output the same markers with "
-        "translated content. Do not output anything else."
+        "Translate each ⟦Ek⟧...⟦/Ek⟧ block inside <segments>. Return the same "
+        "markers in the same order. Output nothing outside the markers."
     )
-    parts.append("---")
+    parts.append("<segments>")
     parts.append(payload)
-    parts.append("---")
+    parts.append("</segments>")
 
     protected, saved = _protect_latex("\n\n".join(parts))
     messages = [
-        {"role": "system", "content": GROUP_SYSTEM},
+        {"role": "system", "content": TRANSLATE_SYSTEM_BATCH},
         {"role": "user", "content": protected},
     ]
     # Output budget: batched payload + Korean overhead. We give ~3x source

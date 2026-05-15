@@ -38,10 +38,23 @@ class Glossary:
     mapping: dict[str, str]
 
     def as_prompt_block(self) -> str:
+        """Inject the glossary as a JSON hard-constraint block.
+
+        Empirically the model adheres to a structured JSON mapping much more
+        reliably than a bulleted '- en → ko' list — the latter blends into
+        prose and is easy for the model to gloss over.
+        """
         if not self.mapping:
             return ""
-        lines = [f"- {en} → {ko}" for en, ko in self.mapping.items()]
-        return "Use this fixed terminology mapping for consistency:\n" + "\n".join(lines)
+        return (
+            "Use the following terminology mapping as a HARD CONSTRAINT. "
+            "Whenever a source term (key) appears in the input, the Korean "
+            "output MUST use the mapped value verbatim — never paraphrase, "
+            "translate differently, or omit the mapping.\n"
+            "<terminology>\n"
+            f"{json.dumps(self.mapping, ensure_ascii=False, indent=2)}\n"
+            "</terminology>"
+        )
 
     def apply(self, text: str) -> str:
         """Optional post-process: enforce glossary terms after model output."""
