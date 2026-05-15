@@ -1,11 +1,27 @@
 """Element-aware translation with structure preservation.
 
-원칙:
-- 일반 텍스트 → 자연스러운 한국어
-- 수식(equation) → LaTeX 그대로 유지 (텍스트 주변 설명만 번역 — 여기선 통째 보존)
-- 표(table) → HTML 태그/속성/구조는 그대로, 내부 텍스트만 번역
-- 그림(figure)/차트(chart) → 캡션 텍스트가 있으면 번역, 이미지 자체는 보존
-- 용어집을 system 프롬프트에 박아 일관된 용어 사용
+라우팅 (현재 동작):
+- paragraph/heading/list/caption → Solar 번역 (LaTeX placeholder 보호, context 전달)
+- header → 페이지 번호면 drop, 챕터 헤더면 작은 italic 번역
+- table → main.py에서 PDF 영역 크롭한 base64가 붙어 있으면 이미지로 통과 (번역 X).
+  base64 없을 때만 HTML 트리 walk로 셀 텍스트 번역 (fallback).
+- equation → main.py에서 PDF 크롭 base64가 붙어 있으면 이미지로 통과.
+  없을 때만 docx_builder에서 LaTeX → MathML → OMML로 렌더 (fallback).
+- figure/chart → 항상 PASSTHROUGH. Upstage Document Parse base64 그대로.
+- header(페이지번호)/footer/footnote → SKIP.
+
+번역 보호 장치:
+1. _wrap_unicode_math: U+1D400-U+1D7FF 영역 unicode bold-italic 글자를 \\mathbf{} LaTeX로 변환.
+2. _protect_latex: \\$..\\$, \\(..\\), \\[..\\] 패턴을 ⟦M0⟧ placeholder로 치환해 모델이 못 만짐.
+3. _looks_like_ocr_garbage: 파이프·문자 밀도 휴리스틱으로 깨진 행렬 잔해 element 자동 폐기.
+4. _detect_near_duplicates: 80-char fingerprint로 Document Parse가 같은 단락 두 번 뱉은 케이스 dedup.
+5. _clean_model_output: '**번역:**', '[정확한 번역]', 'However, to strictly...' 등 메타 코멘트
+   첫 매치 위치에서 truncation. 남은 **bold** 마커도 strip.
+6. Glossary: chapter 전체에서 추출한 용어집을 system prompt에 강제 주입.
+
+호출 패턴:
+- _translate_one은 ThreadPoolExecutor 워커당 1번 실행.
+- TRANSLATE_WORKERS 환경변수로 동시 처리 개수 조정.
 """
 from __future__ import annotations
 
@@ -20,6 +36,7 @@ ProgressCb = Callable[[int, int], None]
 
 from bs4 import BeautifulSoup, NavigableString
 
+from . import boilerplate as boilerplate_mod
 from .glossary import Glossary
 from .parser import Element
 from .solar import SolarClient
@@ -29,6 +46,15 @@ log = logging.getLogger(__name__)
 SKIP_CATEGORIES = {"footer", "footnote", "page_number"}
 PASSTHROUGH_CATEGORIES = {"equation", "figure", "chart"}
 TABLE_CATEGORIES = {"table"}
+# Categories eligible to be grouped into a marker-batched page payload.
+GROUPABLE_CATEGORIES = {
+    "paragraph", "heading1", "heading2", "heading3", "heading4",
+    "title", "list", "caption",
+}
+# Max characters of source text packed into a single page-batch request.
+# Above this we split into multiple chunks so a single Solar call stays
+# well under the model's context budget.
+GROUP_MAX_CHARS = 3500
 # 'header' is special: pure-number page headers (e.g. "198") are dropped,
 # but running chapter headers ("4.1 Two Pictures of Linear Equations") are translated.
 
@@ -37,8 +63,10 @@ TRANSLATE_SYSTEM = (
     "ABSOLUTE RULES — violating any of these makes the output unusable:\n"
     "1. Output EXACTLY ONE translation. NEVER multiple drafts, variants, alternatives, "
     "or 'final versions'. Pick the single best Korean rendering and stop.\n"
-    "2. NO commentary, NO meta-explanations, NO translator notes, NO markdown headings "
-    "like '**최종 번역:**' or '**다음 번역:**'. Output the translation as plain prose only.\n"
+    "2. NO commentary, NO meta-explanations, NO translator notes — in ANY language. "
+    "Forbidden examples include but are not limited to: '**최종 번역:**', '**번역:**', "
+    "'[정확한 번역]', 'However, to strictly adhere…', 'This preserves the exact…', "
+    "'Note:', '(※ …)'. Output the translation as plain Korean prose only.\n"
     "3. NO horizontal rules ('---'), NO bullet lists explaining choices, NO parenthetical "
     "asides discussing terminology decisions. Just the translation.\n"
     "4. Preserve any LaTeX (\\$...\\$, \\$\\$...\\$\\$, \\\\(...\\\\), \\\\[...\\\\]) and placeholders "
@@ -213,15 +241,27 @@ def _translate_text(
 
 
 _HR_RE = re.compile(r"(?m)^\s*-{3,}\s*$")
-# A markdown bold header like '**번역:**', '**수정 요청 사항:**'. When this appears
-# anywhere in the answer, the model has switched from translating to commentary and
-# everything from that point on is unreliable.
-# Matches headers like '**번역:**', '**수정 요청 사항:**' where the colon lives
-# INSIDE the bold delimiters. Also matches the variant '**번역**:' with colon outside.
-_META_HEADER_RE = re.compile(
-    r"\*\*\s*[^\n*]{1,40}?[:：]\s*\*\*"
-    r"|\*\*\s*[^\n*]{1,40}?\s*\*\*\s*[:：]"
-)
+# Multiple meta-marker patterns. Each one signals "the model stopped translating
+# and started commenting"; we truncate at the earliest hit.
+_META_PATTERNS = [
+    re.compile(r"\*\*\s*[^\n*]{1,40}?[:：]\s*\*\*"),                    # **번역:**
+    re.compile(r"\*\*\s*[^\n*]{1,40}?\s*\*\*\s*[:：]"),                 # **번역**:
+    re.compile(r"\[\s*(?:정확한|대안|최종|개선된|수정|두\s*번째|또\s*다른|참고|예시)\s*번역\s*\]"),
+    re.compile(r"However,\s+to\s+strictly\s+adhere", re.IGNORECASE),
+    re.compile(r"However,\s+the\s+translation", re.IGNORECASE),
+    re.compile(r"This\s+preserves\s+the\s+exact", re.IGNORECASE),
+    re.compile(r"To\s+strictly\s+adhere\s+to", re.IGNORECASE),
+    re.compile(r"\(\s*※"),                                              # (※ ...)
+]
+
+
+def _find_first_meta(text: str) -> "re.Match[str] | None":
+    earliest = None
+    for r in _META_PATTERNS:
+        m = r.search(text)
+        if m and (earliest is None or m.start() < earliest.start()):
+            earliest = m
+    return earliest
 
 
 def _clean_model_output(out: str) -> str:
@@ -235,7 +275,7 @@ def _clean_model_output(out: str) -> str:
     out = re.sub(r"^---\s*", "", out)
     out = re.sub(r"\s*---$", "", out)
     out = _HR_RE.sub("", out)
-    m = _META_HEADER_RE.search(out)
+    m = _find_first_meta(out)
     if m:
         out = out[: m.start()].rstrip()
     parts = re.split(r"\n\s*\n", out)
@@ -300,6 +340,164 @@ def _looks_like_ocr_garbage(text: str) -> bool:
     return False
 
 
+_MARKER_OPEN = "⟦E{}⟧"
+_MARKER_CLOSE = "⟦/E{}⟧"
+_MARKER_RE = re.compile(r"⟦E(\d+)⟧\s*(.*?)\s*⟦/E\1⟧", re.DOTALL)
+
+GROUP_SYSTEM = (
+    TRANSLATE_SYSTEM
+    + "\n\nBATCH FORMAT — STRICT:\n"
+    "The input is multiple text snippets wrapped in markers like "
+    "⟦E0⟧...⟦/E0⟧, ⟦E1⟧...⟦/E1⟧, etc. Translate EACH marker block and "
+    "return the SAME markers with translated content inside, in the SAME "
+    "ORDER. Do not merge blocks, do not skip blocks, do not add blocks, "
+    "do not put text outside markers. Preserve marker tokens (⟦Ek⟧, ⟦/Ek⟧) "
+    "EXACTLY — including the digit. No surrounding prose or commentary."
+)
+
+
+def _build_marked_payload(elems: list[Element]) -> tuple[str, list[Element]]:
+    """Build the ⟦Ek⟧-wrapped payload. Returns (prompt_text, ordered_elements).
+
+    Elements with empty source text are dropped from the batch.
+    """
+    parts: list[str] = []
+    used: list[Element] = []
+    for e in elems:
+        text = (e.text or e.markdown or "").strip()
+        if not text:
+            continue
+        text = _wrap_unicode_math(text)
+        idx = len(used)
+        parts.append(f"{_MARKER_OPEN.format(idx)}\n{text}\n{_MARKER_CLOSE.format(idx)}")
+        used.append(e)
+    return "\n".join(parts), used
+
+
+def _parse_marked_response(out: str, count: int) -> list[str]:
+    """Pull translations out of the marker-tagged response.
+
+    Slots the model failed to emit come back as empty strings; the caller
+    re-translates those individually as a fallback.
+    """
+    results = [""] * count
+    for m in _MARKER_RE.finditer(out):
+        k = int(m.group(1))
+        if 0 <= k < count:
+            results[k] = m.group(2).strip()
+    return results
+
+
+def _split_page_into_chunks(elems: list[Element], max_chars: int = GROUP_MAX_CHARS) -> list[list[Element]]:
+    """Split a page's groupable elements into batches that fit within max_chars."""
+    chunks: list[list[Element]] = []
+    cur: list[Element] = []
+    cur_size = 0
+    for e in elems:
+        size = len((e.text or "").strip())
+        if cur and cur_size + size > max_chars:
+            chunks.append(cur)
+            cur = [e]
+            cur_size = size
+        else:
+            cur.append(e)
+            cur_size += size
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _translate_page_chunk(
+    solar: SolarClient,
+    glossary: Glossary,
+    chunk: list[Element],
+    *,
+    prev_context: str = "",
+    next_context: str = "",
+) -> dict[int, str]:
+    """Translate a chunk of page elements with marker batching.
+
+    Returns a dict {element_id: translated_text}. Elements the model failed
+    to translate within the batch are re-tried one-by-one via _translate_text
+    so a partial-batch failure doesn't lose data.
+    """
+    payload, used = _build_marked_payload(chunk)
+    if not used:
+        return {}
+
+    glossary_block = glossary.as_prompt_block()
+    parts: list[str] = []
+    if glossary_block:
+        parts.append(glossary_block)
+    if prev_context or next_context:
+        parts.append(
+            "CONTEXT (surrounding text from the same document — for reference "
+            "ONLY, DO NOT translate or include any of this in your output):"
+        )
+        if prev_context:
+            parts.append(f"[Previous text]\n{prev_context}")
+        if next_context:
+            parts.append(f"[Next text]\n{next_context}")
+    parts.append(
+        "Translate each ⟦Ek⟧...⟦/Ek⟧ block. Output the same markers with "
+        "translated content. Do not output anything else."
+    )
+    parts.append("---")
+    parts.append(payload)
+    parts.append("---")
+
+    protected, saved = _protect_latex("\n\n".join(parts))
+    messages = [
+        {"role": "system", "content": GROUP_SYSTEM},
+        {"role": "user", "content": protected},
+    ]
+    # Output budget: batched payload + Korean overhead. We give ~3x source
+    # length, capped to keep one request from running away.
+    src_chars = sum(len((e.text or "").strip()) for e in used)
+    max_tokens = min(8000, max(400, src_chars * 3))
+
+    try:
+        out = solar.chat(messages=messages, temperature=0.0, max_tokens=max_tokens)
+    except Exception:
+        log.exception("page-batch call failed; falling back to per-element")
+        return _translate_chunk_individually(solar, glossary, used)
+    out = _restore_latex(out, saved)
+    translated = _parse_marked_response(out, len(used))
+
+    result: dict[int, str] = {}
+    missing: list[Element] = []
+    for elem, t in zip(used, translated):
+        if not t:
+            missing.append(elem)
+            continue
+        cleaned = _clean_model_output(t)
+        if cleaned:
+            result[elem.id] = glossary.apply(cleaned)
+        else:
+            missing.append(elem)
+
+    if missing:
+        log.info(
+            "page-batch: %d/%d markers missing/empty — re-trying individually",
+            len(missing), len(used),
+        )
+        result.update(_translate_chunk_individually(solar, glossary, missing))
+    return result
+
+
+def _translate_chunk_individually(
+    solar: SolarClient, glossary: Glossary, elems: list[Element],
+) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for e in elems:
+        try:
+            out[e.id] = _translate_text(solar, glossary, e.text or "")
+        except Exception:
+            log.exception("per-element fallback failed id=%s", e.id)
+            out[e.id] = e.text or ""
+    return out
+
+
 def _translate_one(
     solar: SolarClient,
     glossary: Glossary,
@@ -314,7 +512,7 @@ def _translate_one(
         return TranslatedElement(elem, elem.text, elem.html, status=f"skip:{cat}")
     if cat in PASSTHROUGH_CATEGORIES:
         # equation/figure/chart with a base64 image (from Document Parse or PDF crop)
-        # will be rendered as image in docx; mark distinctly so meta can count.
+        # will be rendered as image in docx; mark distinctly so meta can count it.
         status = f"image:{cat}" if elem.base64 else f"passthrough:{cat}"
         return TranslatedElement(elem, elem.text, elem.html, status=status)
     if cat == "header":
@@ -419,6 +617,19 @@ def translate_elements(
     *,
     on_progress: ProgressCb | None = None,
 ) -> list[TranslatedElement]:
+    """Translate elements with two layers of batching:
+
+    1. Page-grouped text (paragraph/heading/list/caption) goes through the
+       marker-batched _translate_page_chunk path — one Solar call per chunk
+       of up to ~3500 chars. Cuts call count by ~10–30x.
+    2. Special elements (table/equation/figure/header/...) still go through
+       _translate_one element-by-element so structure-preserving logic
+       (HTML walk, image passthrough, OCR-garbage filter) remains intact.
+
+    Boilerplate (running headers/footers detected as repeated short text
+    across 3+ pages) is skipped entirely with empty translated_text so the
+    docx builder drops those paragraphs.
+    """
     items = list(elements)
     total = len(items)
     try:
@@ -429,48 +640,132 @@ def translate_elements(
     dupes = _detect_near_duplicates(items)
     if dupes:
         log.info("translator: %d near-duplicate elements will be dropped", len(dupes))
+
+    skip_boiler, boiler_hits = boilerplate_mod.detect(items)
+    for hit in boiler_hits:
+        log.info(
+            "boilerplate detected (%d pages, ids=%s): %r",
+            len(hit.pages), hit.element_ids[:6], hit.sample,
+        )
+    if boiler_hits:
+        log.info("translator: %d boilerplate elements will be dropped", len(skip_boiler))
+
     prevs, nexts = _build_neighbor_index(items)
+    prev_by_id = {e.id: prevs[i] for i, e in enumerate(items)}
+    next_by_id = {e.id: nexts[i] for i, e in enumerate(items)}
+
+    # Pre-fill results for every element so the page-batch path and the
+    # per-element path can both write into the same indexed slot.
+    results: list[TranslatedElement | None] = [None] * total
+    index_by_id: dict[int, int] = {e.id: i for i, e in enumerate(items)}
+    completed = 0
+
+    def _bump(n: int = 1) -> None:
+        nonlocal completed
+        completed += n
+        if on_progress:
+            on_progress(completed, total)
+
+    # Stage A — handle boilerplate/dup/skip/passthrough/special items inline,
+    # and collect groupable text elements per page for batched translation.
+    page_groups: dict[int, list[Element]] = {}
+    for idx, e in enumerate(items):
+        cat = e.category.lower()
+
+        if e.id in skip_boiler:
+            # Drop entirely (empty text) — docx_builder skips empty paragraphs.
+            results[idx] = TranslatedElement(e, "", e.html, status="skip:boilerplate")
+            _bump()
+            continue
+
+        if cat in GROUPABLE_CATEGORIES and not _looks_like_ocr_garbage(e.text or "") and e.id not in dupes:
+            page_groups.setdefault(e.page, []).append(e)
+            continue
+
+        # Everything else (table, equation, figure, chart, header, footer,
+        # OCR garbage, duplicates, footnote, page_number) goes through the
+        # legacy per-element path. Fast because most of those are SKIP /
+        # PASSTHROUGH and never hit the API.
+        try:
+            results[idx] = _translate_one(
+                solar, glossary, e,
+                prev_text=prev_by_id.get(e.id, ""),
+                next_text=next_by_id.get(e.id, ""),
+                is_duplicate=(e.id in dupes),
+            )
+        except Exception:
+            log.exception("special-path failed for element id=%s", e.id)
+            results[idx] = TranslatedElement(e, e.text, e.html)
+        _bump()
+
+    # Stage B — split each page's groupable elements into chunks and
+    # translate in parallel.
+    chunks: list[list[Element]] = []
+    for page in sorted(page_groups):
+        chunks.extend(_split_page_into_chunks(page_groups[page]))
 
     if on_progress:
-        on_progress(0, total)
+        on_progress(completed, total)
 
-    if workers == 1 or total <= 1:
-        out: list[TranslatedElement] = []
-        for i, e in enumerate(items, 1):
-            out.append(_translate_one(
-                solar, glossary, e,
-                prev_text=prevs[i-1], next_text=nexts[i-1],
-                is_duplicate=(e.id in dupes),
-            ))
-            if on_progress:
-                on_progress(i, total)
-        return out
+    def _run_chunk(chunk: list[Element]) -> dict[int, str]:
+        # Use the first and last elements of the chunk to look up context
+        # — these were computed from the neighbor index above.
+        prev_ctx = prev_by_id.get(chunk[0].id, "") if chunk else ""
+        next_ctx = next_by_id.get(chunk[-1].id, "") if chunk else ""
+        return _translate_page_chunk(
+            solar, glossary, chunk,
+            prev_context=prev_ctx, next_context=next_ctx,
+        )
 
-    results: list[TranslatedElement | None] = [None] * total
-    log_every = max(1, total // 20)  # ~5% increments
-    completed = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {
-            ex.submit(
-                _translate_one, solar, glossary, elem,
-                prev_text=prevs[idx], next_text=nexts[idx],
-                is_duplicate=(elem.id in dupes),
-            ): idx
-            for idx, elem in enumerate(items)
-        }
-        for fut in as_completed(futures):
-            idx = futures[fut]
-            try:
-                results[idx] = fut.result()
-            except Exception:
-                log.exception("worker failed for element %d; keeping original", idx)
-                e = items[idx]
-                results[idx] = TranslatedElement(e, e.text, e.html, status="fallback:translate_failed")
-            completed += 1
-            if on_progress:
-                on_progress(completed, total)
-            if completed % log_every == 0 or completed == total:
-                log.info("translated %d/%d elements (workers=%d)", completed, total, workers)
+    log.info(
+        "page-batch translation: %d chunks across %d pages (workers=%d)",
+        len(chunks), len(page_groups), workers,
+    )
+
+    def _store_chunk_results(chunk: list[Element], mapping: dict[int, str]) -> None:
+        """Translate chunk → results slot, tagging status.
+
+        Fallback detection: when _translate_chunk_individually catches an
+        exception it returns the original English text. We tag that as
+        'fallback:translate_failed' so meta accounting reflects reality.
+        """
+        for e in chunk:
+            t = mapping.get(e.id, e.text or "")
+            src_strip = (e.text or "").strip()
+            if not t.strip():
+                # Empty after both batch and individual fallback — count as
+                # fallback (translated_text='' → docx_builder drops paragraph).
+                status = "fallback:translate_failed"
+            elif src_strip and t.strip() == src_strip:
+                # Translation equals source — almost certainly the individual
+                # fallback that returns e.text on exception.
+                status = "fallback:translate_failed"
+            else:
+                status = "translated"
+            results[index_by_id[e.id]] = TranslatedElement(e, t, e.html, status=status)
+
+    if workers == 1 or len(chunks) <= 1:
+        for chunk in chunks:
+            mapping = _run_chunk(chunk)
+            _store_chunk_results(chunk, mapping)
+            _bump(len(chunk))
+    else:
+        log_every = max(1, len(chunks) // 10)
+        done_chunks = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_run_chunk, c): c for c in chunks}
+            for fut in as_completed(futs):
+                chunk = futs[fut]
+                try:
+                    mapping = fut.result()
+                except Exception:
+                    log.exception("page-batch worker failed; keeping originals")
+                    mapping = {e.id: e.text or "" for e in chunk}
+                _store_chunk_results(chunk, mapping)
+                done_chunks += 1
+                _bump(len(chunk))
+                if done_chunks % log_every == 0 or done_chunks == len(chunks):
+                    log.info("page-batch %d/%d chunks done", done_chunks, len(chunks))
 
     return [r for r in results if r is not None]
 
@@ -481,15 +776,21 @@ def build_translation_meta(
     *,
     preferred_count: int = 0,
 ) -> dict:
-    """Aggregate per-element statuses into the meta dict required by SUCCESS_CRITERIA P1."""
+    """Aggregate per-element statuses into the meta dict required by SUCCESS_CRITERIA P1.
+
+    Buckets line up with the categories the UI displays:
+      - skip_reasons: header/footer/page_number, duplicate, OCR garbage, boilerplate,
+        passthrough equation/figure/chart
+      - image_preserved: table, equation, figure, chart (where a base64 image was attached)
+      - fallback: elements where translation failed and we kept the source
+      - glossary_size + preferred_terms_applied: how much terminology was forced
+    """
     from collections import Counter
 
     total = len(translated)
     status_counts: Counter[str] = Counter(t.status for t in translated)
-
     category_counts: Counter[str] = Counter(t.element.category.lower() for t in translated)
 
-    # Buckets requested by SUCCESS_CRITERIA.
     skip_reasons = {
         "header_footer_page_number": (
             status_counts.get("skip:footer", 0)
@@ -498,6 +799,7 @@ def build_translation_meta(
         ),
         "duplicate": status_counts.get("skip:duplicate", 0),
         "ocr_garbage": status_counts.get("skip:ocr_garbage", 0),
+        "boilerplate": status_counts.get("skip:boilerplate", 0),
         "passthrough_equation": status_counts.get("passthrough:equation", 0),
         "passthrough_figure": status_counts.get("passthrough:figure", 0),
         "passthrough_chart": status_counts.get("passthrough:chart", 0),
@@ -520,7 +822,6 @@ def build_translation_meta(
         + status_counts.get("translated:table", 0)
     )
 
-    # "Translation target" = everything except categorical skips/passthroughs/images.
     translation_target = total - skipped_total - image_preserved_total
 
     return {

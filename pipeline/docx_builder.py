@@ -30,14 +30,26 @@ IMAGE_CATEGORIES = {"figure", "chart"}
 TABLE_CATEGORIES = {"table"}
 
 
-def _add_image_from_base64(doc: Document, b64: str, max_width_inches: float = 5.5) -> bool:
+def _add_image_from_base64(
+    doc: Document,
+    b64: str,
+    *,
+    max_width_inches: float = 6.0,
+    source_dpi: int = 200,
+) -> bool:
+    """Decode base64 → normalize via PIL → embed in docx at natural pixel-derived size.
+
+    Natural size is computed as `pixels / source_dpi`, so a 400×120 image rendered
+    at 200 DPI lands at 2.0" × 0.6" — preserving its visual proportion to the
+    original PDF. Wide images get clamped to `max_width_inches` (default 6.0",
+    typical Word usable width). Narrow inline equations stay narrow.
+    """
     if not b64:
         log.warning("image: empty base64 — skipped")
         return False
     data = b64.strip()
     if data.startswith("data:") and "," in data:
         data = data.split(",", 1)[1]
-    # Some encoders include whitespace inside the base64 — strip it.
     data = "".join(data.split())
     try:
         raw = base64.b64decode(data, validate=False)
@@ -48,28 +60,31 @@ def _add_image_from_base64(doc: Document, b64: str, max_width_inches: float = 5.
         log.warning("image: decoded bytes too small (%d) — likely placeholder, skipping", len(raw))
         return False
 
-    # Verify with PIL first — if PIL can read it, normalize to PNG and re-encode so we
-    # bypass any python-docx quirks with the original format (progressive JPEG, CMYK, etc).
     try:
         from PIL import Image
         with Image.open(BytesIO(raw)) as im:
             im.load()
-            w, h = im.size
+            w_px, h_px = im.size
             mode = im.mode
             if mode not in ("RGB", "RGBA", "L"):
                 im = im.convert("RGB")
             normalized = BytesIO()
             im.save(normalized, format="PNG")
             normalized.seek(0)
-        log.info("image: PIL ok mode=%s size=%dx%d, normalized to PNG", mode, w, h)
         bio = normalized
     except Exception as e:
         log.warning("image: PIL could not open (%s); first 8 bytes hex=%s, total bytes=%d", e, raw[:8].hex(), len(raw))
         return False
 
+    natural_w_in = w_px / max(1, source_dpi)
+    natural_h_in = h_px / max(1, source_dpi)
+    final_w_in = min(natural_w_in, max_width_inches)
+    log.info(
+        "image: %dx%dpx → natural %.2f×%.2fin, embedding at %.2fin wide",
+        w_px, h_px, natural_w_in, natural_h_in, final_w_in,
+    )
     try:
-        doc.add_picture(bio, width=Inches(max_width_inches))
-        log.info("image: inserted")
+        doc.add_picture(bio, width=Inches(final_w_in))
         return True
     except Exception as e:
         log.warning("image: add_picture failed (%s)", e)
@@ -222,13 +237,14 @@ def build_docx(
             continue
 
         # Tables/equations with a PDF-cropped image attached → render as image for
-        # pixel-perfect fidelity. Without an image, fall through to the existing
-        # HTML-table / OMML-equation rendering paths below.
+        # pixel-perfect fidelity. Width follows the cropped pixel size at 200 DPI
+        # (capped at 6"), so a short inline equation stays small and a wide
+        # display equation/table fills the page.
         if cat in TABLE_CATEGORIES and elem.base64:
-            if _add_image_from_base64(doc, elem.base64, max_width_inches=6.0):
+            if _add_image_from_base64(doc, elem.base64):
                 continue
         if cat == "equation" and elem.base64:
-            if _add_image_from_base64(doc, elem.base64, max_width_inches=5.5):
+            if _add_image_from_base64(doc, elem.base64):
                 continue
 
         if cat == "caption":
