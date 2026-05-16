@@ -40,6 +40,21 @@ OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./output"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Cap concurrent pipeline runs so we don't fan out beyond what the API
+# pool can handle. Jobs over the cap sit in the 'queued' stage until a
+# slot frees. Tune with MAX_CONCURRENT_JOBS env var.
+try:
+    _MAX_CONCURRENT_JOBS = max(1, int(os.environ.get("MAX_CONCURRENT_JOBS", "2")))
+except ValueError:
+    _MAX_CONCURRENT_JOBS = 2
+_JOB_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_JOBS)
+
+_key_count = len(solar_mod.parse_keys(os.environ.get("UPSTAGE_API_KEY", "")))
+log.info(
+    "config: max_concurrent_jobs=%d, upstage_api_keys=%d",
+    _MAX_CONCURRENT_JOBS, _key_count,
+)
+
 app = FastAPI(title="STEM Textbook Translator", version="0.1.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -69,6 +84,18 @@ def _run_pipeline(
     title: str | None,
     interactive: bool,
 ) -> None:
+    # Throttle concurrent pipelines. Try non-blocking first so we can
+    # surface a "queued" status when all slots are busy.
+    acquired = _JOB_SEMAPHORE.acquire(blocking=False)
+    if not acquired:
+        REGISTRY.set_stage(
+            job_id, "queued",
+            message=f"처리 슬롯 대기 중 (최대 동시 {_MAX_CONCURRENT_JOBS}개)",
+        )
+        log.info("job %s :: queued — waiting for free slot", job_id)
+        _JOB_SEMAPHORE.acquire()
+        log.info("job %s :: slot acquired", job_id)
+
     mock_mode = _truthy(os.environ.get("MOCK_MODE"))
     try:
         try:
@@ -277,6 +304,8 @@ def _run_pipeline(
     except Exception as e:
         log.exception("job %s :: pipeline failed", job_id)
         REGISTRY.fail(job_id, f"{type(e).__name__}: {e}")
+    finally:
+        _JOB_SEMAPHORE.release()
 
 
 @app.post("/translate")
