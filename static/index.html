@@ -251,6 +251,7 @@
     </div>
 
     <div class="stages" id="stages">
+      <div class="stage" data-k="queued"><span class="dot"></span><span>⓪ 대기</span></div>
       <div class="stage" data-k="upload"><span class="dot"></span><span>① 업로드</span></div>
       <div class="stage" data-k="parse"><span class="dot"></span><span>② Document Parse</span></div>
       <div class="stage" data-k="glossary"><span class="dot"></span><span>③ 용어집 추출</span></div>
@@ -368,8 +369,9 @@ function resetStages() {
   progressElapsed.textContent = '';
 }
 
-const STAGE_ORDER = ['upload','parse','glossary','awaiting_review','translate','docx','pdf'];
+const STAGE_ORDER = ['queued','upload','parse','glossary','awaiting_review','translate','docx','pdf'];
 const STAGE_LABEL = {
+  queued: '처리 슬롯 대기',
   upload: '업로드',
   parse: 'Document Parse 호출',
   glossary: '용어집 추출',
@@ -472,16 +474,39 @@ async function waitForReviewConfirm() {
   });
 }
 
+// Polling tolerates transient network blips — a single failed fetch
+// shouldn't kill the job display. We retry a few times with short backoffs
+// before giving up.
+const POLL_MAX_RETRIES = 5;
+const POLL_RETRY_BASE_MS = 700;
+
+async function fetchProgressWithRetry(jobId) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < POLL_MAX_RETRIES; attempt++) {
+    try {
+      const r = await fetch(`/jobs/${jobId}/progress`);
+      if (!r.ok) throw new Error(`progress ${r.status}`);
+      return await r.json();
+    } catch (err) {
+      lastErr = err;
+      // 404 means the job genuinely doesn't exist — no point retrying.
+      if (String(err.message).includes('404')) break;
+      // Surface "재연결 중…" so the user sees we're alive between retries.
+      progressMessage.textContent = `재연결 중… (${attempt + 1}/${POLL_MAX_RETRIES})`;
+      await new Promise(r => setTimeout(r, POLL_RETRY_BASE_MS * (attempt + 1)));
+    }
+  }
+  throw new Error('진행 상황 조회 실패: ' + (lastErr ? lastErr.message : 'unknown'));
+}
+
 async function pollProgress(jobId) {
   let reviewedAlready = false;
   while (true) {
     let snap;
     try {
-      const r = await fetch(`/jobs/${jobId}/progress`);
-      if (!r.ok) throw new Error(`progress ${r.status}`);
-      snap = await r.json();
+      snap = await fetchProgressWithRetry(jobId);
     } catch (err) {
-      throw new Error('진행 상황 조회 실패: ' + err.message);
+      throw err;
     }
 
     if (snap.stage === 'done') {
