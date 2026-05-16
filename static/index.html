@@ -474,29 +474,57 @@ async function waitForReviewConfirm() {
   });
 }
 
-// Polling tolerates transient network blips — a single failed fetch
-// shouldn't kill the job display. We retry a few times with short backoffs
-// before giving up.
+// Network resilience knobs. We retry transient failures (5xx, network
+// blips) with linear backoff. 404 short-circuits (job genuinely gone).
 const POLL_MAX_RETRIES = 5;
 const POLL_RETRY_BASE_MS = 700;
 
-async function fetchProgressWithRetry(jobId) {
+class SessionGoneError extends Error {
+  constructor(msg) { super(msg); this.name = 'SessionGoneError'; }
+}
+
+function isTransientStatus(status) {
+  // 5xx (server / proxy overload) and 408/429 (timeout / rate) are worth retrying.
+  return status >= 500 || status === 408 || status === 429;
+}
+
+async function fetchWithRetry(url, init, { onRetry, retries = POLL_MAX_RETRIES } = {}) {
   let lastErr = null;
-  for (let attempt = 0; attempt < POLL_MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const r = await fetch(`/jobs/${jobId}/progress`);
-      if (!r.ok) throw new Error(`progress ${r.status}`);
-      return await r.json();
+      const r = await fetch(url, init);
+      if (r.status === 404) {
+        throw new SessionGoneError(`세션이 만료되었습니다 (${url} → 404)`);
+      }
+      if (!r.ok) {
+        if (isTransientStatus(r.status)) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+        const body = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}: ${body.slice(0, 200)}`);
+      }
+      return r;
     } catch (err) {
+      if (err instanceof SessionGoneError) throw err;
       lastErr = err;
-      // 404 means the job genuinely doesn't exist — no point retrying.
-      if (String(err.message).includes('404')) break;
-      // Surface "재연결 중…" so the user sees we're alive between retries.
-      progressMessage.textContent = `재연결 중… (${attempt + 1}/${POLL_MAX_RETRIES})`;
+      if (onRetry) onRetry(attempt + 1, retries, err);
       await new Promise(r => setTimeout(r, POLL_RETRY_BASE_MS * (attempt + 1)));
     }
   }
-  throw new Error('진행 상황 조회 실패: ' + (lastErr ? lastErr.message : 'unknown'));
+  throw lastErr || new Error('unknown error after retries');
+}
+
+async function fetchProgressWithRetry(jobId) {
+  const r = await fetchWithRetry(
+    `/jobs/${jobId}/progress`,
+    undefined,
+    {
+      onRetry: (n, max) => {
+        progressMessage.textContent = `재연결 중… (${n}/${max})`;
+      },
+    },
+  );
+  return await r.json();
 }
 
 async function pollProgress(jobId) {
@@ -531,16 +559,24 @@ async function pollProgress(jobId) {
       progressCount.textContent = '검토 대기';
       renderReviewRows(snap.glossary || {});
       const edited = await waitForReviewConfirm();
-      const post = await fetch(`/jobs/${jobId}/glossary`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ glossary: edited }),
-      });
-      if (!post.ok) {
-        const msg = await post.text();
+      try {
+        await fetchWithRetry(
+          `/jobs/${jobId}/glossary`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ glossary: edited }),
+          },
+          {
+            onRetry: (n, max) => {
+              confirmGlossaryBtn.textContent = `재시도 중… (${n}/${max})`;
+            },
+          },
+        );
+      } catch (err) {
         confirmGlossaryBtn.disabled = false;
         confirmGlossaryBtn.textContent = '이대로 번역 시작';
-        throw new Error(`용어집 제출 실패 (${post.status}): ${msg}`);
+        throw err;
       }
       reviewCard.style.display = 'none';
       await new Promise(r => setTimeout(r, 300));
@@ -583,7 +619,21 @@ goBtn.addEventListener('click', async () => {
     const result = await pollProgress(job_id);
     renderResults(result);
   } catch (err) {
-    summary.innerHTML = `<span style="color: var(--bad)">실패: ${err.message}</span>`;
+    if (err && err.name === 'SessionGoneError') {
+      summary.innerHTML =
+        '<span style="color: var(--bad)">세션이 만료되었습니다 ' +
+        '(서버 재시작 또는 작업 폐기). 페이지를 새로고침한 뒤 PDF를 다시 ' +
+        '업로드해주세요.</span>' +
+        '<div style="margin-top:10px"><button class="primary" onclick="location.reload()">🔄 페이지 새로고침</button></div>';
+    } else {
+      const detail = (err && err.message) || String(err);
+      const transient = /HTTP 5\d\d|HTTP (408|429)|Failed to fetch|NetworkError/.test(detail);
+      const hint = transient
+        ? '<br><span class="meta">서버 또는 Upstage API가 일시 과부하 상태일 수 있습니다. 잠시 후 다시 시도해주세요.</span>'
+        : '';
+      summary.innerHTML =
+        `<span style="color: var(--bad)">실패: ${detail}</span>${hint}`;
+    }
     results.classList.add('visible');
     downloads.innerHTML = '';
     glossaryBody.innerHTML = '';
